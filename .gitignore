@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+
+# 個人 VS Code 設定 (含本機路徑)
+.vscode/
+*.code-workspace
+
+# DRV-Modbus 原作者的 git 歷史 (本 repo 不追蹤)
+DRV-Modbus/.git_upstream/
+
+# 執行紀錄、擷取影像、測試輸出 (大且每台電腦不同;需要時另外分享)
+DRV-Modbus/runs/
+DRV-Modbus/records/
+DRV-Modbus/tests/out/
+DRV-Modbus/*_last.png
+DRV-Modbus/test_food*
+DRV-Modbus/color_detect_snapshot.png
+DRV-Modbus/calibration.bak_*.json
+
+# 舊版簡報
+PBL專題規劃報告_v1*.pptx
+PBL專題規劃報告_v2*.pptx
+PBL專題規劃報告_v3*.pptx
+~$*.pptx
