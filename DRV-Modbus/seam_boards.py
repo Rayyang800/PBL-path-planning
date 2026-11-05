@@ -152,17 +152,14 @@ def overlay(frame, pf, res):
     return out
 
 
+CAPTURE = {}             # grab_frame 最近一次的完整快照 (含深度) 與相機資訊
+
+
 def grab_frame():
-    import pyrealsense2 as rs
-    pipe = rs.pipeline(); cfg = rs.config()
-    cfg.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
-    pipe.start(cfg)
-    try:
-        for _ in range(40):
-            f = pipe.wait_for_frames(5000)
-        return np.asanyarray(f.get_color_frame().get_data())
-    finally:
-        pipe.stop()
+    from rs_capture import grab_once
+    snap, info = grab_once(n_depth=15, warmup=40)
+    CAPTURE.update(snap=snap, info=info)
+    return snap["color"]
 
 
 def main():
@@ -211,7 +208,10 @@ def main():
                              "tag_corners_px": {str(k): v.tolist() for k, v in pf.found.items()}}
     with RunLog("seam", label=args.label, runs_dir=args.runs_dir, params=vars(args), hardware=hw) as log:
         log.add_input(DEFAULT_LAYOUT)
-        log.save_image("frame_raw", frame)
+        if args.camera:
+            log.save_snapshot("frame_raw", CAPTURE["snap"], CAPTURE["info"])     # 彩色 + 深度
+        else:
+            log.save_image("frame_raw", frame)
         log.save_image("overlay.jpg", ov)          # 疊圖僅供目視,用 JPG 省空間;原始影像維持無損 PNG
         log.event("analyze", ok=bool(res["ok"]), reason=res.get("reason"))
         if res["ok"]:

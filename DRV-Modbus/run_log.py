@@ -19,6 +19,14 @@
   - 事件 type 建議:cmd_move{pose,speed,mov,frame}、cmd_gripper{state}、tcp{pose,flag}、note、error。
   - 先存原始資料 (raw 影像、指令、回讀位姿),衍生結果 (偏差、統計) 可以事後重算。
   - 永不覆蓋:同名資料夾自動加 -1、-2。
+
+v2 (11-05) 新增
+  - save_snapshot(name, snap, cam_info):彩色 images/<name>.png + 深度 depth/<name>.png (uint16,對齊彩色,
+    單位見 depth/<name>.json 的 depth_scale_m) + 相機內參;load_snapshot(run, name) 讀回 (深度轉成 mm,0 -> NaN)。
+  - console.log:執行期間終端機的所有輸出 (console=False 可關)。
+  - meta.git:commit 與是否有未提交修改;meta.camera:相機序號/韌體/內參 (第一次 save_snapshot 時寫入)。
+  - current():目前進行中的紀錄。drv_modbus.send.Go_Position 與 gripper 會自動把指令、移動中的軌跡
+    (tcp_trace,約 10 Hz)、夾爪動作寫進去,舊腳本只要包在 with RunLog(...) 裡就有完整紀錄。
 """
 import datetime as dt
 import hashlib
@@ -35,7 +43,46 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUNS_DIR = os.path.join(HERE, "runs")
 CALIB_DIR = os.path.join(HERE, "calibrations")
-SCHEMA = 1
+SCHEMA = 2
+_CURRENT = []            # 進行中的 RunLog (堆疊)
+
+
+def current():
+    """目前進行中的紀錄;沒有則 None。"""
+    return _CURRENT[-1] if _CURRENT else None
+
+
+def _git_info():
+    import subprocess
+    try:
+        kw = dict(cwd=HERE, capture_output=True, text=True, timeout=5)
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], **kw).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--", "."], **kw).stdout.strip()
+        return {"commit": commit or None, "dirty_files": dirty.splitlines()[:50] if dirty else []}
+    except Exception:        # noqa: BLE001 - 沒有 git 也照常紀錄
+        return None
+
+
+class _Tee:
+    """把 stdout/stderr 同時寫到 console.log。"""
+
+    def __init__(self, stream, f):
+        self.stream, self.f = stream, f
+
+    def write(self, s):
+        self.stream.write(s)
+        try:
+            self.f.write(s)
+            self.f.flush()
+        except ValueError:   # 檔案已關
+            pass
+        return len(s)
+
+    def flush(self):
+        self.stream.flush()
+
+    def __getattr__(self, k):
+        return getattr(self.stream, k)
 
 
 def _now():
@@ -97,7 +144,8 @@ def _unique_dir(base):
 class RunLog:
     """with RunLog("seam", label="two_boards", params=vars(args)) as log: ...  (離開 with 時自動 finish)"""
 
-    def __init__(self, kind, label="", runs_dir=RUNS_DIR, params=None, hardware=None, script=None, argv=None):
+    def __init__(self, kind, label="", runs_dir=RUNS_DIR, params=None, hardware=None, script=None, argv=None,
+                 console=True):
         self._t0 = time.time()
         started = _now()
         name = f"{started.strftime('%Y%m%d-%H%M%S')}_{kind}" + (f"_{label}" if label else "")
@@ -114,16 +162,25 @@ class RunLog:
                        "argv": list(argv if argv is not None else sys.argv[1:])},
             "env": {"python": sys.version.split()[0], "platform": platform.platform(), "packages": _packages()},
             "hardware": hardware or {}, "params": params or {}, "inputs": {}, "result": None, "notes": "",
+            "git": _git_info(), "camera": None, "snapshots": [],
         }
         self._events = open(os.path.join(self.path, "events.jsonl"), "a", encoding="utf-8")
         self._finished = False
+        self._tee = None
+        if console:
+            self._console = open(os.path.join(self.path, "console.log"), "a", encoding="utf-8")
+            self._tee = (sys.stdout, sys.stderr)
+            sys.stdout, sys.stderr = _Tee(sys.stdout, self._console), _Tee(sys.stderr, self._console)
         self._write_meta()
+        _CURRENT.append(self)
 
     # ----- writing helpers (return path relative to the run folder) -----
     def _write_meta(self):
         _dump(os.path.join(self.path, "meta.json"), self.meta)
 
     def event(self, type_, **data):
+        if self._finished:
+            return
         rec = {"t": round(time.time() - self._t0, 3), "ts": _now().isoformat(timespec="milliseconds"), "type": type_}
         rec.update(data)
         self._events.write(json.dumps(rec, ensure_ascii=False, default=_default) + "\n")
@@ -144,6 +201,33 @@ class RunLog:
         if not ok:
             raise ValueError("影像編碼失敗: " + rel)
         buf.tofile(os.path.join(self.path, rel))
+        return rel
+
+    def save_snapshot(self, name, snap, cam_info=None, color_ext=".png"):
+        """存 rs_capture 的快照:彩色 images/<name><ext>、深度 depth/<name>.png (uint16) + depth/<name>.json。
+        snap 也可以只是 BGR 影像 (沒有深度)。回傳彩色的相對路徑。"""
+        if isinstance(snap, np.ndarray):
+            snap = {"color": snap}
+        rel = self.save_image(name, snap["color"], color_ext)
+        rec = {"name": name, "color": rel.replace("\\", "/"), "time": snap.get("time")}
+        if cam_info and self.meta.get("camera") is None:
+            self.meta["camera"] = cam_info
+        if snap.get("depth") is not None:
+            os.makedirs(os.path.join(self.path, "depth"), exist_ok=True)
+            drel = os.path.join("depth", name + ".png")
+            ok, buf = cv2.imencode(".png", snap["depth"])
+            if not ok:
+                raise ValueError("深度編碼失敗: " + drel)
+            buf.tofile(os.path.join(self.path, drel))
+            info = cam_info or self.meta.get("camera") or {}
+            dmeta = {"depth_scale_m": info.get("depth_scale_m"), "aligned_to": "color",
+                     "intrinsics": info.get("color_intrinsics"), "n_frames_median": snap.get("n_depth"),
+                     "valid_frac": snap.get("depth_valid_frac"), "time": snap.get("time")}
+            _dump(os.path.join(self.path, "depth", name + ".json"), dmeta)
+            rec.update({"depth": drel.replace("\\", "/"), "depth_valid_frac": snap.get("depth_valid_frac")})
+        self.meta["snapshots"].append(rec)
+        self._write_meta()
+        self.event("snapshot", **rec)
         return rel
 
     def save_json(self, name, obj):
@@ -170,6 +254,12 @@ class RunLog:
         self._write_meta()
         self._events.close()
         self._finished = True
+        if self._tee:
+            sys.stdout, sys.stderr = self._tee
+            self._console.close()
+            self._tee = None
+        if self in _CURRENT:
+            _CURRENT.remove(self)
 
     def __enter__(self):
         return self
@@ -178,6 +268,10 @@ class RunLog:
         if not self._finished:
             if et is None:
                 self.finish("ok")
+            elif et is SystemExit:                    # 腳本用 sys.exit("原因") 結束
+                code = ev.code if ev is not None else None
+                self.event("exit", code=str(code))
+                self.finish("ok" if code in (0, None) else "exited", {"exit": str(code)})
             else:
                 self.event("error", error=repr(ev))
                 self.finish("aborted" if et is KeyboardInterrupt else "failed", {"error": repr(ev)})
@@ -194,6 +288,42 @@ def load_run(path):
         with open(p, encoding="utf-8") as f:
             events = [json.loads(line) for line in f if line.strip()]
     return meta, events
+
+
+def run_main(kind, main, **kw):
+    """舊腳本一行接上紀錄:if __name__ == "__main__": run_main("warp_sort", main)
+    (-h/--help 不建立紀錄)。移動、夾爪、snapshot() 都會自動寫進這筆紀錄。"""
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        return main()
+    with RunLog(kind, params={"argv": sys.argv[1:]}, **kw):
+        return main()
+
+
+def snapshot(name, snap, cam_info=None, color_ext=".png"):
+    """存進目前進行中的紀錄 (沒有紀錄就略過)。"""
+    lg = current()
+    if lg is not None:
+        return lg.save_snapshot(name, snap, cam_info, color_ext)
+
+
+def load_snapshot(path, name):
+    """讀回 save_snapshot 存的快照:回傳 (color BGR, depth_mm float32 或 None (0 -> NaN), depth_meta dict 或 None)。"""
+    meta, _ = load_run(path)
+    rec = next((s for s in meta.get("snapshots", []) if s["name"] == name), None)
+    color_rel = rec["color"] if rec else os.path.join("images", name + ".png")
+    color = cv2.imdecode(np.fromfile(os.path.join(path, color_rel), np.uint8), cv2.IMREAD_COLOR)
+    if not rec or "depth" not in rec:
+        return color, None, None
+    raw = cv2.imdecode(np.fromfile(os.path.join(path, rec["depth"]), np.uint8), cv2.IMREAD_UNCHANGED)
+    with open(os.path.join(path, "depth", name + ".json"), encoding="utf-8") as f:
+        dmeta = json.load(f)
+    mm = raw.astype(np.float32) * float(dmeta["depth_scale_m"] or 0.001) * 1000.0
+    mm[raw == 0] = np.nan
+    return color, mm, dmeta
+
+
+def list_snapshots(path):
+    return [s["name"] for s in load_run(path)[0].get("snapshots", [])]
 
 
 class CalibrationStore:

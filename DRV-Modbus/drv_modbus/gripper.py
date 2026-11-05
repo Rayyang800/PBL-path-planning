@@ -14,11 +14,23 @@ DO_OPEN = 64     # DO7 ON
 DO_CLOSE = 128   # DO8 ON
 
 
+def _log(state):
+    try:
+        import run_log
+        lg = run_log.current()
+        if lg is not None:
+            lg.event("cmd_gripper", state=state)
+    except Exception:        # noqa: BLE001 - 紀錄失敗不能影響夾爪
+        pass
+
+
 def Gripper_Open(c, delay=1.0):
     c.write_register(DO_REGISTER, DO_OPEN, 2)
+    _log("open")
     time.sleep(delay)
 
 
 def Gripper_Close(c, delay=1.0):
     c.write_register(DO_REGISTER, DO_CLOSE, 2)
+    _log("close")
     time.sleep(delay)

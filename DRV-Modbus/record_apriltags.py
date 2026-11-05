@@ -246,11 +246,12 @@ def main():
 
     def record_now():
         nonlocal snap_id
-        per_frame, last, found_fam = [], None, None
+        per_frame, last, found_fam, depths = [], None, None, []
         for _ in range(args.frames):
             color, depth = grab(pipe, align)
             if color is None:
                 continue
+            depths.append(depth.copy())
             gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
             corners, ids, fam = detect(gray, aruco_dict, params)
             per_frame.append(tag_observations(corners, ids, depth, scale, intr, args.tag_size, K, D))
@@ -263,7 +264,20 @@ def main():
         cv2.aruco.drawDetectedMarkers(shot, [c.reshape(1, 4, 2).astype(np.float32) for c in last[1]],
                                       np.array(last[2]).reshape(-1, 1) if last[2] else None)
         save_record(snap_id, tags, tcp, shot, args, found_fam)
-        print(f"\n[已記錄 #{snap_id}] -> {OUT_DIR}")
+        # v2:另存原始彩色 (無標註)、深度中位數 (uint16,對齊彩色) 與內參,方便離線重算
+        D = np.stack(depths).astype(np.float32)
+        D[D == 0] = np.nan
+        with np.errstate(all="ignore"):
+            dmed = np.nan_to_num(np.nanmedian(D, axis=0), nan=0).round().astype(np.uint16)
+        base = os.path.join(OUT_DIR, f"snapshot_{snap_id:03d}")
+        cv2.imencode(".png", last[0])[1].tofile(base + "_raw.png")
+        cv2.imencode(".png", dmed)[1].tofile(base + "_depth.png")
+        with open(base + "_camera.json", "w", encoding="utf-8") as f:
+            json.dump({"depth_scale_m": scale, "aligned_to": "color", "n_frames_median": len(depths),
+                       "intrinsics": {"fx": intr.fx, "fy": intr.fy, "ppx": intr.ppx, "ppy": intr.ppy,
+                                      "width": intr.width, "height": intr.height, "coeffs": list(intr.coeffs)},
+                       "tcp_pose_mm_deg": tcp}, f, indent=2)
+        print(f"\n[已記錄 #{snap_id}] -> {OUT_DIR} (含 _raw.png / _depth.png / _camera.json)")
         print_summary(tags, tcp)
 
     try:

@@ -14,6 +14,7 @@ from pymodbus.client import ModbusTcpClient
 
 from drv_modbus import send, request
 from drv_modbus.conn import refresh
+from run_log import RunLog
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROBOT_IP = "192.168.1.1"
@@ -46,15 +47,22 @@ def main():
         if input("確認路徑安全後按 Enter 移動 (q 取消): ").strip().lower() == "q":
             return
         refresh(c)   # 等待期間手臂可能已關閉閒置連線
-        try:
-            if low:
-                send.Go_Position(c, cur[0], cur[1], z_safe, *cur[3:], min(args.speed, 20), send.MovL)
-            send.Go_Position(c, *home, args.speed, send.MovP)
-        except (send.CommandIgnored, TimeoutError) as e:
-            sys.exit("\n未到達 home: " + str(e))
-        except send.Interrupted:
-            sys.exit("\n已按 Ctrl+C:送出停止指令,手臂停在目前位置")
-        print("已到達 home:", [round(v, 1) for v in request.Get_TCP_Pose(c)])
+        with RunLog("go_home", params=vars(args), hardware={"robot_ip": ROBOT_IP}) as log:   # 指令與軌跡自動記錄
+            log.add_input(os.path.join(HERE, "calibration.json"))
+            log.event("tcp", pose=cur, flag=request.Get_Pose_Flag(c))
+            try:
+                if low:
+                    send.Go_Position(c, cur[0], cur[1], z_safe, *cur[3:], min(args.speed, 20), send.MovL)
+                send.Go_Position(c, *home, args.speed, send.MovP)
+            except (send.CommandIgnored, TimeoutError) as e:
+                log.finish("failed", {"error": str(e)})
+                sys.exit("\n未到達 home: " + str(e))
+            except send.Interrupted:
+                log.finish("aborted", {"error": "ctrl_c"})
+                sys.exit("\n已按 Ctrl+C:送出停止指令,手臂停在目前位置")
+            end = request.Get_TCP_Pose(c)
+            print("已到達 home:", [round(v, 1) for v in end])
+            log.finish("ok", {"end_pose": end})
     finally:
         c.close()
 

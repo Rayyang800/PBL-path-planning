@@ -17,10 +17,11 @@ import sys
 
 import cv2
 import numpy as np
-import pyrealsense2 as rs
 from pymodbus.client import ModbusTcpClient
 
 import cam_orient
+import run_log
+from rs_capture import grab_once
 from drv_modbus import send, request
 from drv_modbus import gripper
 from drv_modbus.conn import refresh
@@ -156,9 +157,6 @@ def main():
     c = ModbusTcpClient(host=ROBOT_IP, port=502, timeout=3)
     if not c.connect():
         sys.exit("連線手臂失敗")
-    pipe = rs.pipeline()
-    cfg = rs.config()
-    cfg.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
     try:
         tcp = request.Get_TCP_Pose(c)
         ok, dpos, dang = check_home(calib, tcp)
@@ -166,10 +164,10 @@ def main():
         if not ok:
             sys.exit("手臂不在 home 位姿 (相機位置不同,座標會錯)。請先用教導器回到 home 再執行")
 
-        pipe.start(cfg)
-        for _ in range(30):
-            pipe.wait_for_frames(5000)
-        frame = np.asanyarray(pipe.wait_for_frames(5000).get_color_frame().get_data())
+        snap, cam_info = grab_once(n_depth=15)          # 彩色 + 深度 (存進紀錄供離線測試)
+        frame = snap["color"]
+        run_log.snapshot("home", snap, cam_info)
+        run_log.current() and run_log.current().event("tcp", pose=tcp)
         frame, _, msg = cam_orient.orient_frame(frame, lambda f: tag_pixel_centers(f, dicts, params),
                                                 args.rot180, calib.get("tag_pixels"))
         print(msg)
@@ -198,6 +196,9 @@ def main():
             cv2.drawContours(view, [o["contour"]], -1, (0, 255, 0) if inside else (0, 0, 255), 2)
         cv2.polylines(view, [np.int32([live[i] for i in (1, 2, 4, 3)])], True, (255, 0, 0), 2)
         cv2.imencode(".png", view)[1].tofile(os.path.join(HERE, "warp_pick_last.png"))
+        if run_log.current():
+            run_log.current().save_image("detect.jpg", view)
+            run_log.current().save_json("plan", {"targets": [(x, y, inside) for x, y, inside, _ in results]})
         print("已存辨識結果圖: warp_pick_last.png")
 
         targets = [r for r in results if r[2]]
@@ -212,17 +213,15 @@ def main():
         input("確認安全 (手放急停旁、路徑無障礙) 後按 Enter 開始 ")
         pick_and_place(Mover(c, args.speed, step=not args.auto), calib, x, y)
         print("完成")
-    except KeyboardInterrupt:
-        print("\n使用者中止 (手臂停在目前位置,夾爪狀態不變)")
+    except (KeyboardInterrupt, send.Interrupted):
+        print("\n使用者中止 (已送停止指令;手臂停在目前位置,夾爪狀態不變)")
+        run_log.current() and run_log.current().finish("aborted", {"reason": "user"})
     except TimeoutError as e:
         print("\n" + str(e))
+        run_log.current() and run_log.current().finish("failed", {"error": str(e)})
     finally:
-        try:
-            pipe.stop()
-        except RuntimeError:
-            pass
         c.close()
 
 
 if __name__ == "__main__":
-    main()
+    run_log.run_main("warp_pick", main)

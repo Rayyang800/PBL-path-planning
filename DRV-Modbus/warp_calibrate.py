@@ -24,10 +24,11 @@ import time
 
 import cv2
 import numpy as np
-import pyrealsense2 as rs
 from pymodbus.client import ModbusTcpClient
 
 import cam_orient
+import run_log
+from rs_capture import RSCamera
 from drv_modbus import request
 from drv_modbus.conn import refresh
 from record_apriltags import make_detector, detect
@@ -44,7 +45,9 @@ def read_tcp(c):
     pose = request.Get_TCP_Pose(c)
     if pose is None:
         sys.exit("讀不到手臂位姿")
-    return [float(v) for v in pose]
+    pose = [float(v) for v in pose]
+    run_log.current() and run_log.current().event("tcp", pose=pose)
+    return pose
 
 
 def centers(frame, dicts, params):
@@ -93,15 +96,11 @@ def main():
     if not c.connect():
         sys.exit("連線手臂失敗")
 
-    pipe = rs.pipeline()
-    cfg = rs.config()
-    cfg.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
-    pipe.start(cfg)
+    cam = RSCamera()                    # 彩色 + 深度
+    pipe = cam.pipe
     try:
-        for _ in range(30):
-            pipe.wait_for_frames(5000)
-
         ask("步驟1/4: 用教導器把手臂移到『觀察位姿 home』,確認相機完整看到 ID 1~4 四個 tag")
+        run_log.snapshot("home", cam.grab(n_depth=15, flush=5), cam.info())
         rot, msg = cam_orient.decide(args.rot180, centers(grab(pipe), dicts, params),
                                      old.get("tag_pixels") if old else None)
         print(msg)
@@ -133,7 +132,7 @@ def main():
             drop = read_tcp(c)
             print("drop:", [round(v, 3) for v in drop])
     finally:
-        pipe.stop()
+        cam.close()
         c.close()
 
     data = {"family": FAMILY, "home": home, "tag_pixels": pix, "tag_robot_xyz": tags,
@@ -148,7 +147,9 @@ def main():
                                   notes="pixels-only" if args.pixels_only else "full", extra={"camera_rotate_180": bool(rot)})
     print("\n已儲存:", OUT)
     print("版本紀錄:", os.path.relpath(ver, HERE))
+    if run_log.current():
+        run_log.current().save_json("calibration", data)
 
 
 if __name__ == "__main__":
-    main()
+    run_log.run_main("warp_calibrate", main)

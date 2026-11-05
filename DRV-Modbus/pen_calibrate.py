@@ -25,7 +25,6 @@ import time
 
 import cv2
 import numpy as np
-import pyrealsense2 as rs
 from pymodbus.client import ModbusTcpClient
 
 import pen_marks
@@ -34,6 +33,9 @@ from drv_modbus import send, request, gripper
 from drv_modbus.conn import refresh
 from paper_frame import PaperFrame
 from run_log import RunLog, CalibrationStore
+from rs_capture import RSCamera, grab_once
+
+LAST_GRAB = {}           # grab() 最近一次的完整快照 (含深度) 與相機資訊,供存檔
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LAYOUT = os.path.join(HERE, "print", "lab_sheet_layout.json")
@@ -46,27 +48,12 @@ class Abort(Exception):
         self.lift = lift            # 結束前要不要垂直抬到安全高度
 
 
-class Camera:
-    """持續開著的 RealSense (自動探觸要反覆拍照,每次重開太慢)。"""
+class Camera(RSCamera):
+    """持續開著的 RealSense (彩色 + 深度)。frame() 回傳彩色,完整快照 (含深度) 留在 self.last 供存檔。"""
 
-    def __init__(self):
-        self.pipe, cfg = rs.pipeline(), rs.config()
-        cfg.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
-        self.pipe.start(cfg)
-        for _ in range(30):
-            self.pipe.wait_for_frames(5000)
-
-    def frame(self, settle=0.4, flush=6):
-        time.sleep(settle)                       # 等手臂停穩
-        for _ in range(flush):                   # 丟掉緩衝區裡移動中的舊影像
-            self.pipe.wait_for_frames(5000)
-        return np.asanyarray(self.pipe.wait_for_frames(5000).get_color_frame().get_data()).copy()
-
-    def close(self):
-        try:
-            self.pipe.stop()
-        except RuntimeError:
-            pass
+    def frame(self, settle=0.4, flush=6, n_depth=1):
+        self.last = self.grab(n_depth=n_depth, settle=settle, flush=flush)   # settle: 等手臂停穩;flush: 丟掉移動中的舊影像
+        return self.last["color"]
 
 
 def small_cross(arm, x, y, z, half):
@@ -156,7 +143,7 @@ def auto_probe(arm, cam, log, x, y, z_start, z_floor, max_steps, ink, home, z_sa
 
     tag = f"probe_{len([f for f in os.listdir(os.path.join(log.path, 'images')) if f.endswith('_ref.jpg')])}"
     ref = shoot()
-    log.save_image(f"{tag}_ref.jpg", ref)
+    log.save_snapshot(f"{tag}_ref", cam.last, cam.info(), color_ext=".jpg")
     mask = roi_mask if look == "home" else None
     z = z_start
     for k in range(max_steps):
@@ -172,7 +159,7 @@ def auto_probe(arm, cam, log, x, y, z_start, z_floor, max_steps, ink, home, z_sa
         else:
             arm.move(x, y, z)
         img = shoot()
-        log.save_image(f"{tag}_z{z:.1f}.jpg", img)
+        log.save_snapshot(f"{tag}_z{z:.1f}", cam.last, color_ext=".jpg")
         m = mask if mask is not None else lift_roi(img.shape)
         blobs = [b for b in pen_marks.new_ink_blobs(ref, img, ink, min_area=12)
                  if m[int(round(b[1][1])), int(round(b[1][0]))]]
@@ -194,16 +181,11 @@ def auto_probe(arm, cam, log, x, y, z_start, z_floor, max_steps, ink, home, z_sa
     return None
 
 
-def grab(n_warm=20):
-    pipe, cfg = rs.pipeline(), rs.config()
-    cfg.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
-    pipe.start(cfg)
-    try:
-        for _ in range(n_warm):
-            pipe.wait_for_frames(5000)
-        return np.asanyarray(pipe.wait_for_frames(5000).get_color_frame().get_data()).copy()
-    finally:
-        pipe.stop()
+def grab(n_warm=20, n_depth=15):
+    """開相機拍一張 (彩色 + n_depth 張深度中位數) 後關閉。回傳彩色;完整快照在 LAST_GRAB["snap"/"info"]。"""
+    snap, info = grab_once(n_depth=n_depth, warmup=n_warm)
+    LAST_GRAB.update(snap=snap, info=info)
+    return snap["color"]
 
 
 def plan_points(pf, args):
@@ -306,9 +288,10 @@ class Arm:
     def move(self, x, y, z, mov=send.MovL, speed=None, ori=None):
         ori = ori or self.ori
         refresh(self.c)
-        self.log.event("cmd_move", pose=[x, y, z, *ori], speed=speed or self.speed,
-                       mov="MovL" if mov == send.MovL else "MovP", frame="robot_mm_deg")
-        try:
+        try:                      # cmd_move / tcp_trace / move_done 由 send.Go_Position 自動寫進 run_log
+            if self.log is not None and self.log is not __import__("run_log").current():
+                self.log.event("cmd_move", pose=[x, y, z, *ori], speed=speed or self.speed,
+                               mov="MovL" if mov == send.MovL else "MovP", frame="robot_mm_deg")
             send.Go_Position(self.c, x, y, z, *ori, speed or self.speed, mov, on_poll=self._poll)
         except send.Interrupted as e:
             self.stop_and_check(str(e))
@@ -316,9 +299,7 @@ class Arm:
         if abs(z - getattr(self, "_last_z", z)) < 1.0:
             time.sleep(0.3)       # 很小的移動:旗標可能來不及變化,多等一下
         self._last_z = z
-        tcp = request.Get_TCP_Pose(self.c)
-        self.log.event("tcp", pose=tcp, flag=request.Get_Pose_Flag(self.c))
-        return tcp
+        return request.Get_TCP_Pose(self.c)
 
     def lift_to(self, z_safe):
         """在目前 XY 垂直抬到 z_safe (低於才動);避免筆在紙上斜著拖過去。"""
@@ -330,8 +311,7 @@ class Arm:
     def grip(self, close, delay=1.0):
         if delay:                 # 移動中 (delay=0) 不重連,避免打斷正在進行的輪詢
             refresh(self.c)
-        (gripper.Gripper_Close if close else gripper.Gripper_Open)(self.c, delay=delay)
-        self.log.event("cmd_gripper", state="close" if close else "open")
+        (gripper.Gripper_Close if close else gripper.Gripper_Open)(self.c, delay=delay)   # 自動寫 cmd_gripper
 
 
 HELP = ("  Enter=往下一步  數字(如 2 / 0.5)=改步距並往下  u=往上一步  c=筆尖剛好碰到紙  a=從這裡開始自動探觸\n"
@@ -465,8 +445,12 @@ def main():
         sys.exit("旗標不是 1,請先在教導器清除警報")
 
     frame0 = grab()
+    snap0, cam_info = LAST_GRAB["snap"], LAST_GRAB["info"]
     pf = PaperFrame(layout=args.layout)
     if not pf.detect(frame0):
+        with RunLog("pen_calib", label=args.label, params=vars(args)) as log:     # 失敗也留下照片
+            log.save_snapshot("home_before", snap0, cam_info)
+            log.finish("failed", {"reason": "校正紙: " + pf.describe()})
         sys.exit("校正紙: " + pf.describe())
     print("校正紙:", pf.describe())
 
@@ -551,6 +535,16 @@ def main():
     cv2.imencode(".png", view)[1].tofile(os.path.join(HERE, "pen_calibrate_plan.png"))
     print("預覽圖: pen_calibrate_plan.png")
     if not args.go:
+        with RunLog("pen_calib", label=args.label or "dryrun", params=vars(args)) as log:
+            log.add_input(args.layout)
+            log.add_input(wp.CALIB)
+            log.event("tcp", pose=tcp, flag=flag)
+            log.save_snapshot("home_before", snap0, cam_info)
+            log.save_image("plan.jpg", view)
+            log.save_json("plan_preview", {"paper_pts": paper_pts, "robot_xy": np.asarray(robot).tolist(),
+                                           "H_rough": H_rough.tolist(), "z_safe": z_safe, "z_floor": z_floor})
+            log.finish("dry-run")
+            print("紀錄 (含深度):", log.path)
         print("\n(dry-run) 沒有移動手臂。確認點位在紙上、遠離 tag 後,加 --go 執行")
         c.close()
         return
@@ -561,13 +555,16 @@ def main():
                 hardware={"robot_ip": wp.ROBOT_IP, "camera": "RealSense D435 1280x720"}) as log:
         log.add_input(args.layout)
         log.add_input(wp.CALIB)
-        log.save_image("home_before", before_img)          # 接續時 = 最早那次 (還沒有任何墨點) 的照片
+        log.event("tcp", pose=tcp, flag=flag)
         if args.resume:
-            log.save_image("home_resume", frame0)
+            log.save_image("home_before", before_img)      # 接續時 = 最早那次 (還沒有任何墨點) 的照片
+            log.save_snapshot("home_resume", snap0, cam_info)
+        else:
+            log.save_snapshot("home_before", snap0, cam_info)
+        if args.resume:
             log.event("note", msg="resume", from_run=prev_meta["run_id"], offset=offset)
             for p in prev_pts:
                 log.event("prev_point", **p)
-        log.event("tcp", pose=tcp, flag=flag)
         arm = Arm(c, log, ori, args.speed)
         points = list(prev_pts)
         n0 = len(prev_pts)
@@ -739,12 +736,14 @@ def _finish(args, log, cam, points, H_rough, offset, home, ori, before_img):
             "home": home, "orientation": ori, "layout": os.path.basename(args.layout)}
     log.save_json("plan", plan)
     if cam:
-        frame1 = cam.frame(settle=1.0, flush=15)
+        frame1 = cam.frame(settle=1.0, flush=15, n_depth=15)
+        snap1, info = cam.last, cam.info()
         cam.close()
     else:
         time.sleep(1.0)
         frame1 = grab()
-    log.save_image("home_after", frame1)
+        snap1, info = LAST_GRAB["snap"], LAST_GRAB["info"]
+    log.save_snapshot("home_after", snap1, info)
     res = pen_marks.analyze(frame1, PaperFrame(layout=args.layout), points, H_rough, args.stroke,
                             mark=args.mark, before=before_img, offset=offset)
     log.save_json("marks_result", res)

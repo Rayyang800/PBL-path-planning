@@ -32,7 +32,16 @@
 
 更新本文件的 §7(程式清單與狀態)、§11(待辦)、§13(變更紀錄)。
 
-**新增或修改任何「會動手臂」或「做校正」的腳本時,必須用 `run_log.RunLog` 留紀錄、用 `CalibrationStore` 存校正(§15)。dry-run 也要存。**
+### 0.4 資料紀錄是硬性規定(每次實作都要完整紀錄)
+
+> **每一次實作(含 dry-run、失敗、中途中止)都必須留下完整、可離線重算的紀錄。沒存的資料補不回來。**
+
+1. **會動手臂、拍照或做校正的程式,一律包在 `with RunLog(...)`(或 `run_log.run_main(...)`)裡執行**。新腳本不接紀錄 = 未完成。
+2. **拍照一律用 `rs_capture`,存 `save_snapshot`(彩色 + 對齊深度 + 相機內參)**,不要只存彩色 JPG。
+3. **手臂指令一律經過 `send.Go_Position` / `gripper.*`**,它們會自動記錄指令、約 10 Hz 軌跡、到位/失敗、夾爪動作;不要繞過它們直接寫暫存器。
+4. 校正結果用 `CalibrationStore` 存新版本(不覆蓋);用到的校正檔與版面檔用 `log.add_input()` 複製進紀錄。
+5. 紀錄內容與格式見 **§15**;離線重算工具:`pen_quick_calib.py --analyze`、`pen_marks.py`、`depth_height.py`、`run_log.load_run / load_snapshot`。
+6. `runs/` 不上 GitHub(太大),**每次實作後由使用者另行備份**。
 
 ---
 
@@ -65,7 +74,7 @@
 | D13 | **快速筆尖校正 `pen_quick_calib.py` 取代 D11 成為主要流程**:人只找一次接觸高度 `z_touch`(工作面視為等高),其餘 4 點用同一 z、不拍照,點在第一點 ±X/±Y `--step`(10 mm)內(不跑出工件、筆不再越壓越深);最後回 home 拍一張,前後相減找墨點,擬合**旋轉+平移(比例 1:1)**。理由:D11 太慢、壓壞筆尖、點太分散會塗到底下的 A4。點最好畫在工件的膠帶上(可擦) | 11-05 |
 | D12 | 舊 `calibration.json`(ArUco 1~4)在筆尖校正流程中**只當粗略換算**(預測點位、找 ROI,誤差可達 ±20 mm);精確轉換以 `calibrations/pen_paper/latest.json` 為準 | 11-04 |
 | D8 | 第一個驗證工件先做 **B(兩片黑色平面板縫合塗)**,板子小於 A4 | 11-04 |
-| D9 | **每次執行與校正都要留紀錄且不覆蓋**(原始影像、指令、回讀位姿、校正版本),格式見 §15。用途:重現、統計、手動餵給 CIROS、比對模擬與實機的落差 | 11-04 |
+| D9 | **每次執行與校正都要留完整紀錄且不覆蓋**(彩色+深度快照、相機參數、指令與 10 Hz 軌跡、夾爪、終端輸出、git 版本、校正版本),dry-run/失敗/中止也存;格式見 §15、規則見 §0.4。用途:離線測試、重現、統計、手動餵給 CIROS、比對模擬與實機的落差 | 11-04 → 11-05 v2 |
 
 ### 1.2 範圍
 
@@ -546,6 +555,7 @@ python go_home.py --speed 10
 | 11-04 | 實機:相機接上(D435,USB 3.2)、手臂旗標恢復 1、`go_home` 成功;發現實驗室校正紙為 29 mm 橫放(D10)→ `paper_layout_capture.py`;修正 `Go_Position` 旗標競態(§8 #13);新增 `pen_calibrate.py` / `pen_marks.py`(先畫「+」→ 改點一下 → 改自動探觸畫小十字)、`--resume`、`--pattern cross` |
 | 11-05 | 自動探觸問題排查(§8 #14–16)→ `--look base`(往畫面下方直到看見 ArUco 1/2)、`--ink any`、`--probe-step 3`;即時中斷(Ctrl+C 回 home、空白鍵選單)與夾爪 `o/g`、`gripper_ctl.py`;`tests/test_new_ink.py`、`test_stop.py`;push `7af52c8` |
 | 11-05 | 使用者回報 D11 太慢、壓壞筆尖、點跑出工件(§8 #18)→ 新增 `pen_quick_calib.py`(D13)、`pen_marks.fit_rigid` / `match_pattern`、`new_ink_mask(return_drop=True)`、`tests/test_quick_calib.py`(PASS);修正墨點中心偏 0.8 mm(§8 #19)。手臂當時離線,實機未測 |
+| 11-05 | 舊紀錄分析:10-21 的 `records/` tag 深度 → 深度相對精度約 ±1 mm(4 tag 共平面殘差 ±1 mm、傾角 5.3° vs 手臂 4.9°)。**紀錄 v2**:`rs_capture.py`、`run_log`(深度快照、console.log、git、current()、run_main)、`send`/`gripper` 自動記軌跡;接入 §15.3.1 所列腳本;新增 `depth_height.py`、`tests/test_run_log_v2.py`、`tests/test_depth_height.py`(全部 9 個測試 PASS)。實機/實際相機尚未用 v2 跑過 |
 
 ---
 
@@ -595,6 +605,8 @@ Delta_Arm\
 
 ## 15. 資料紀錄與重現規範(D9)
 
+> **硬性規定(§0.4):每次實作都完整紀錄** —— 彩色 + 深度 + 相機參數、每個手臂指令與移動軌跡、夾爪、按鍵中斷、終端輸出、程式版本、使用的校正檔;dry-run / 失敗 / 中止也一樣。
+
 **為什麼要存**:(1) 重現結果與實驗統計(T12);(2) 之後手動餵給 CIROS 當輸入(D4:不自動串接,由人匯入檔案);(3) 把「模擬預測」與「實機實際」逐點比對,量化風險 5 的虛實落差;(4) 報告的圖表與數據;(5) 出問題時還原現場。**沒存的資料補不回來。**
 
 ### 15.1 資料夾結構(皆在 `DRV-Modbus\` 下,實作在 `run_log.py`)
@@ -606,7 +618,10 @@ runs\<YYYYMMDD-HHMMSS>_<kind>[_<label>]\     每次執行/校正一個資料夾,
     events.jsonl  時間序事件,一行一個 JSON:{"t":秒,"ts":ISO時間,"type":...,...}
     inputs\       執行當下使用的校正檔、版面檔的**複本**
     images\       原始影像(PNG,無損)與疊圖(JPG,僅目視)
+    depth\        (v2) <快照名>.png = 對齊彩色的深度 uint16(多幀逐像素中位數,0 = 無效)+ <快照名>.json(depth_scale_m、內參、幀數、有效比例)
     data\         路徑、偏差等 CSV/JSON
+    console.log   (v2) 執行期間終端機的完整輸出
+    meta.json 另含 (v2):git(commit、未提交的檔案)、camera(序號/韌體/USB/彩色與深度內參/深度單位/深度→彩色外參)、snapshots(快照清單)
 calibrations\<name>\<YYYYMMDD-HHMMSS>.json     每次校正一個新檔,含 supersedes(前一版檔名)、source_run
 calibrations\<name>\latest.json                最新版複本(Windows 不用 symlink)
 ```
@@ -639,9 +654,17 @@ CalibrationStore().save("pen", data, source_run=log.meta["run_id"])
 meta, events = load_run("runs/20261104-155747_seam")
 ```
 
+### 15.3.1 v2 自動紀錄(11-05)
+
+- **`run_log.current()`**:進行中的紀錄。`drv_modbus.send.Go_Position` 會自動寫 `cmd_move`、移動中約 10 Hz 的 `tcp_trace`(pose + flag)、`move_done`(終點、耗時)或 `move_error`;`Stop` 寫 `cmd_stop`;`gripper.Gripper_*` 寫 `cmd_gripper`;吸盤寫 `cmd_suction`。**任何腳本只要在 `with RunLog(...)` 裡移動手臂就有完整軌跡**。
+- **舊腳本一行接上**:`if __name__ == "__main__": run_log.run_main("warp_sort", main)`(`sys.exit("原因")` → status `exited` 並記錄原因;`-h` 不建紀錄)。
+- **相機**:`rs_capture.RSCamera` / `grab_once(n_depth=15)` → `log.save_snapshot(name, snap, cam_info)`;任何地方可用 `run_log.snapshot(name, snap, info)` 存進目前紀錄。讀回:`color, depth_mm, dmeta = load_snapshot(run, name)`(深度 mm,無效 = NaN)。
+- **已接上**:`pen_quick_calib`(dry-run 也存;中止後若已回 home 會補拍 `home_after` 供 `--analyze`)、`pen_calibrate`(探觸每步含深度 JPG+PNG)、`go_home`、`warp_sort`、`warp_pick`、`warp_calibrate`(home 快照、每次讀 TCP、校正結果)、`seam_boards --camera`(含深度)、`record_apriltags`(另存 `records/snapshot_###_raw.png`、`_depth.png`、`_camera.json`)。**未接**:`pick_place_p1_p4`、`test_*` 診斷腳本、`watch_status`。
+- **離線工具**:`depth_height.py runs\<id> [--snap 名] [--at X Y] [--r 6] [--map]` → 從深度快照擬合紙面平面,量指定紙面位置的高度(工件厚度),合成測試 6 mm 量到 +6.04。
+
 ### 15.4 維護規則
 
-- 容量:原始 PNG 約 1.2 MB/張;實驗 60 次約 150 MB 以內。`runs/`、`calibrations/` 建議加入 `.gitignore`或另行備份(目前專案未版控)。
+- 容量:彩色 PNG 約 1.2 MB + 深度 PNG 約 0.3~0.8 MB/快照;`pen_calibrate` 自動探觸每步一組(JPG + 深度)。`runs/` 已在 `.gitignore`,請另行備份。
 - **不要手動修改 run 內的檔案**;要刪除舊紀錄前先問使用者。
-- 既有腳本(`warp_*`、`pick_place_p1_p4`)尚未接入,見 T17。接入前它們不會留紀錄。
-- 驗證:`python tests\test_run_log.py`。
+- 11-05 之前的紀錄(schema 1)沒有深度、軌跡與 console.log。
+- 驗證:`python tests\test_run_log.py`、`tests\test_run_log_v2.py`、`tests\test_depth_height.py`。

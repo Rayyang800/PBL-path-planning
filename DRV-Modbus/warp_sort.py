@@ -18,12 +18,13 @@ import sys
 
 import cv2
 import numpy as np
-import pyrealsense2 as rs
 from pymodbus.client import ModbusTcpClient
 
 import cam_orient
+import run_log
 import warp_pick as wp
-from drv_modbus import request
+from drv_modbus import request, send
+from rs_capture import grab_once
 from drv_modbus.conn import refresh
 from record_apriltags import make_detector, detect
 
@@ -143,9 +144,6 @@ def main():
     c = ModbusTcpClient(host=wp.ROBOT_IP, port=502, timeout=3)
     if not c.connect():
         sys.exit("連線手臂失敗")
-    pipe = rs.pipeline()
-    cfg = rs.config()
-    cfg.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
     try:
         tcp = request.Get_TCP_Pose(c)
         if tcp is None:
@@ -157,11 +155,10 @@ def main():
         if request.Get_Pose_Flag(c) != 1:
             sys.exit("手臂到位旗標不是 1 (忙碌或異常),請先在教導器清除警報後再執行")
 
-        pipe.start(cfg)
-        for _ in range(30):
-            pipe.wait_for_frames(5000)
-        frame = np.asanyarray(pipe.wait_for_frames(5000).get_color_frame().get_data())
-        pipe.stop()
+        snap, cam_info = grab_once(n_depth=15)          # 彩色 + 深度 (存進紀錄供離線測試)
+        frame = snap["color"]
+        run_log.snapshot("home", snap, cam_info)
+        run_log.current() and run_log.current().event("tcp", pose=tcp, flag=1)
 
         dicts, params = make_detector(calib.get("family", "5x5_100"))
         frame, _, msg = cam_orient.orient_frame(frame, lambda f: wp.tag_pixel_centers(f, dicts, params),
@@ -214,6 +211,9 @@ def main():
             if inside:
                 plan.append((name, (x, y), (tx, ty)))
         cv2.imencode(".png", view)[1].tofile(os.path.join(HERE, "warp_sort_last.png"))
+        if run_log.current():
+            run_log.current().save_image("detect.jpg", view)
+            run_log.current().save_json("plan", {"plan": plan, "z_safe": z_safe, "z_pick": z_pick_h, "z_place": z_place_h})
         print("已存辨識結果圖: warp_sort_last.png")
         print(f"高度: 安全 {z_safe:.1f} / 夾取 {z_pick_h:.1f} / 放置 {z_place_h:.1f} mm (校正 z_pick = {calib['z_pick']:.1f})")
 
@@ -234,17 +234,15 @@ def main():
             run_job(mv, calib, z_safe, z_pick_h, z_place_h, pick_xy, place_xy)
         mv.go("home", home[0], home[1], home[2], home[3:])
         print("\n完成")
-    except KeyboardInterrupt:
-        print("\n使用者中止 (手臂停在目前位置,夾爪狀態不變)")
+    except (KeyboardInterrupt, send.Interrupted):
+        print("\n使用者中止 (已送停止指令;手臂停在目前位置,夾爪狀態不變)")
+        run_log.current() and run_log.current().finish("aborted", {"reason": "user"})
     except TimeoutError as e:
         print("\n" + str(e))
+        run_log.current() and run_log.current().finish("failed", {"error": str(e)})
     finally:
-        try:
-            pipe.stop()
-        except RuntimeError:
-            pass
         c.close()
 
 
 if __name__ == "__main__":
-    main()
+    run_log.run_main("warp_sort", main)

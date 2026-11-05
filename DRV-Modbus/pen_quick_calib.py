@@ -32,7 +32,7 @@ import pen_marks
 import warp_pick as wp
 from drv_modbus import send, request
 from paper_frame import PaperFrame
-from pen_calibrate import Arm, Paused, ask, grab, LAYOUT, MAX_SPEED
+from pen_calibrate import Arm, Paused, ask, grab, LAST_GRAB, LAYOUT, MAX_SPEED
 from run_log import RunLog, CalibrationStore, load_run
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -258,9 +258,13 @@ def main():
     if flag != 1:
         sys.exit("旗標不是 1,請先在教導器清除警報")
 
-    before = grab()
+    before = grab()                                   # 彩色 + 15 張深度中位數
+    snap_b, cam_info = LAST_GRAB["snap"], LAST_GRAB["info"]
     pf = PaperFrame(layout=args.layout)
     if not pf.detect(before):
+        with RunLog("pen_quick", label=args.label, params=vars(args)) as log:   # 失敗也留下照片與深度
+            log.save_snapshot("home_before", snap_b, cam_info)
+            log.finish("failed", {"reason": "校正紙: " + pf.describe()})
         sys.exit("校正紙: " + pf.describe())
     start_paper = args.start_paper or (pf.W / 2, pf.H / 2)
     x0, y0 = pen_marks.apply_h(H_rough, pf.paper_to_pix([start_paper], args.surface_h))[0]
@@ -281,6 +285,16 @@ def main():
           f"({x0:.1f},{y0:.1f});其餘 4 點在手臂 ±X/±Y {args.step:g} mm。橘色圈 = 第一點 ±{args.step + 20:g} mm 範圍")
     print(f"安全高度 {z_safe:.1f}、高度下限 {z_floor:.1f}、點間抬 {args.hop:g} mm、下壓 {args.press:g} mm。預覽: pen_quick_plan.png")
     if not args.go:
+        with RunLog("pen_quick", label=args.label or "dryrun", params=vars(args)) as log:
+            log.add_input(args.layout)
+            log.add_input(wp.CALIB)
+            log.event("tcp", pose=tcp, flag=flag)
+            log.save_snapshot("home_before", snap_b, cam_info)
+            log.save_image("plan.jpg", view)
+            log.save_json("plan_preview", {"plan_xy": np.asarray(plan_xy).tolist(), "start_paper": list(start_paper),
+                                           "H_rough": H_rough.tolist(), "z_safe": z_safe, "z_floor": z_floor})
+            log.finish("dry-run")
+            print("紀錄 (含深度):", log.path)
         print("\n(dry-run) 沒有移動手臂。工件要大於第一點 ±(step + 5) mm 的範圍。加 --go 執行")
         c.close()
         return
@@ -291,7 +305,8 @@ def main():
                 hardware={"robot_ip": wp.ROBOT_IP, "camera": "RealSense D435 1280x720"}) as log:
         log.add_input(args.layout)
         log.add_input(wp.CALIB)
-        log.save_image("home_before", before)
+        log.event("tcp", pose=tcp, flag=flag)
+        log.save_snapshot("home_before", snap_b, cam_info)
         arm = Arm(c, log, ori, args.speed)
         points, z_touch = [], None
         print("\n[Ctrl+C = 停止並回 home 結束] [空白/Esc/p = 停止並選單] [移動中 o/g = 夾爪開/夾]")
@@ -346,11 +361,22 @@ def main():
             arm.move(*home[:3], mov=send.MovP, ori=home[3:])
         except (Quit, Paused, KeyboardInterrupt) as e:
             print("\n結束:", e, "-> 垂直抬起回 home")
+            at_home = False
             try:
                 arm.lift_to(z_safe)
                 arm.move(*home[:3], mov=send.MovP, ori=home[3:])
+                at_home = True
             except (Paused, KeyboardInterrupt):
                 print("已停止,手臂停在目前位置 (之後用 python go_home.py)")
+            log.save_json("plan", {"points": points, "H_rough": H_rough.tolist(), "step": args.step,
+                                   "surface_h": args.surface_h, "z_touch": z_touch, "press": args.press,
+                                   "home": home, "orientation": ori, "layout": os.path.basename(args.layout)})
+            if at_home and points:                    # 已點的點也拍下來,之後可 --analyze 離線分析
+                try:
+                    grab()
+                    log.save_snapshot("home_after", LAST_GRAB["snap"], LAST_GRAB["info"])
+                except Exception as ee:              # noqa: BLE001
+                    print("拍照失敗:", ee)
             log.finish("aborted", {"reason": str(e), "points_done": len(points)})
             c.close()
             return
@@ -361,7 +387,7 @@ def main():
         log.save_json("plan", plan)
         time.sleep(1.0)
         after = grab()
-        log.save_image("home_after", after)
+        log.save_snapshot("home_after", LAST_GRAB["snap"], LAST_GRAB["info"])
         res = analyze(before, after, args.layout, points, H_rough, args.step, args.surface_h)
         log.save_json("marks_result", res)
         log.save_image("marks_overlay.jpg", overlay(after, res, points))

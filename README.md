@@ -35,6 +35,17 @@ python pen_quick_calib.py --go --pen-loaded  # 人工找一次高度按 c,其餘
 
 **安全**:會動手臂的程式先 dry-run;手放急停旁;旗標 `0x031F` 不是 1 時先在教導器清除警報。
 
+## 資料紀錄(每次都完整記錄)
+
+**每一次實作——包含 dry-run、失敗、中途中止——都會自動在 `DRV-Modbus/runs/<時間>_<類型>/` 留下完整紀錄**,可離線重算:
+
+- 彩色照片 + **對齊的深度圖**(15 幀中位數)+ 相機內參與序號
+- 每個手臂指令、**移動中約 10 Hz 的位姿軌跡**、到位/失敗/中斷、夾爪動作
+- 終端機完整輸出 `console.log`、程式 git 版本、當下使用的校正檔複本、分析結果
+
+離線工具:`pen_quick_calib.py --analyze runs\<id>`、`depth_height.py runs\<id>`(量工件高度)。
+新寫的程式也必須接上紀錄,規則見 `PROJECT_SPEC.md` §0.4、§15。**`runs/` 不上 GitHub,實作後請另行備份。**
+
 ## 不在 repo 裡的東西
 
 `runs/`、`records/`、測試輸出影像與舊版簡報未上傳(見 `.gitignore`)。
