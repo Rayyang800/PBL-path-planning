@@ -26,11 +26,12 @@ python warp_calibrate.py --pixels-only   # 相機改裝後重記 tag 像素
 python cam_orient.py --set on            # 相機反裝 180 度
 python go_home.py                        # 回 home (低於安全高度會先垂直抬起)
 python gripper_ctl.py                    # 鍵盤控制夾爪:o 開 / g 夾 / q 離開
-python pen_calibrate.py --pen-loaded     # 筆尖校正 dry-run (看 pen_calibrate_plan.png)
-python pen_calibrate.py --go --pen-loaded
+python pen_quick_calib.py --pen-loaded       # 快速筆尖校正 dry-run (看 pen_quick_plan.png)
+python pen_quick_calib.py --go --pen-loaded  # 人工找一次高度按 c,其餘 4 點自動,最後拍照計算
 ```
 
-筆尖校正執行中:Ctrl+C = 停止並回 home;空白鍵 = 暫停選單;o / g = 夾爪開 / 夾。詳見 `PROJECT_SPEC.md` T15。
+筆尖校正執行中:Ctrl+C = 停止並回 home;空白鍵 = 暫停選單;o / g = 夾爪開 / 夾。
+舊的自動探觸版 `pen_calibrate.py` 仍保留。詳見 `PROJECT_SPEC.md` T15、D13。
 
 **安全**:會動手臂的程式先 dry-run;手放急停旁;旗標 `0x031F` 不是 1 時先在教導器清除警報。
 

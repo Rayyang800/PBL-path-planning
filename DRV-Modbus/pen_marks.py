@@ -108,15 +108,17 @@ def find_dot(gray, center, radius, exclude=None, new_ink=None, min_area=4, max_a
     return {"ok": True, "uv": [u, v], "area_px": int(stats[k, cv2.CC_STAT_AREA]), "n_candidates": len(cands)}
 
 
-def new_ink_mask(before, after, pf_after, pf_before, min_drop=35):
-    """把 before 用兩張圖的紙面單應對齊到 after,回傳「after 明顯比 before 暗」的遮罩。"""
+def new_ink_mask(before, after, pf_after, pf_before, min_drop=35, return_drop=False):
+    """把 before 用兩張圖的紙面單應對齊到 after,回傳「after 明顯比 before 暗」的遮罩
+    (return_drop=True 時另回傳變暗量,可當權重算中心)。"""
     Hb2a = pf_after.H0inv @ pf_before.H0                 # before 像素 -> 紙面 -> after 像素
     gb = cv2.cvtColor(before, cv2.COLOR_BGR2GRAY)
     ga = cv2.cvtColor(after, cv2.COLOR_BGR2GRAY)
     warped = cv2.warpPerspective(gb, Hb2a, (ga.shape[1], ga.shape[0]), borderValue=255)
     warped = cv2.erode(warped, np.ones((3, 3), np.uint8))   # 舊的暗點稍微擴大,容忍 1 px 對位誤差
     drop = warped.astype(np.int16) - ga.astype(np.int16)
-    return (drop > min_drop).astype(np.uint8) * 255
+    mask = (drop > min_drop).astype(np.uint8) * 255
+    return (mask, np.clip(drop, 0, None).astype(np.float32)) if return_drop else mask
 
 
 def ink_mask(img, ink="any"):
@@ -174,6 +176,54 @@ def describe_affine(A):
     skew = np.degrees(np.arccos(np.clip(abs(A[:, 0] @ A[:, 1]) / (sx * sy), -1, 1)))
     return {"rotation_deg": float(ang), "scale_x": float(sx), "scale_y": float(sy),
             "axis_angle_deg": float(skew), "mirrored": bool(np.linalg.det(A) < 0)}
+
+
+def fit_rigid(P, C, allow_mirror=True):
+    """C ≈ R·P + t,R 為正交矩陣 (比例固定 1:1;紙面 mm 與手臂 mm 同尺度)。點很集中時比仿射穩定。
+    回傳 (R 2x2, t, 殘差 (N,2))。"""
+    P, C = np.asarray(P, float), np.asarray(C, float)
+    pm, cm = P.mean(0), C.mean(0)
+    U, _, Vt = np.linalg.svd((P - pm).T @ (C - cm))
+    R = (U @ Vt).T
+    if not allow_mirror and np.linalg.det(R) < 0:
+        Vt[-1] *= -1
+        R = (U @ Vt).T
+    t = cm - R @ pm
+    return R, t, C - (P @ R.T + t)
+
+
+def match_pattern(blobs_uv, center_cmd, offsets_cmd, H_rough):
+    """把偵測到的墨點 (像素) 對應到指令點。點的排列 = 中心 + offsets_cmd (手臂 mm)。
+    先找「到其他點距離總和最小」的當中心,再依粗略換算預測的方向分配其餘點 (粗略換算只用來定方向,不用絕對位置)。
+    回傳 [uv 或 None] (順序同 [center] + offsets)。"""
+    if len(blobs_uv) == 0:
+        return [None] * (1 + len(offsets_cmd))
+    B = np.asarray(blobs_uv, float)
+    d = np.linalg.norm(B[:, None] - B[None], axis=2)
+    ci = int(np.argmin(d.sum(1)))
+    out = [B[ci].tolist()]
+    Hinv = np.linalg.inv(H_rough)
+    c_pix = apply_h(Hinv, [center_cmd])[0]
+    used = {ci}
+    for off in offsets_cmd:
+        exp = apply_h(Hinv, [np.asarray(center_cmd) + off])[0] - c_pix      # 這個點相對中心在影像中的預期向量
+        best, bk = None, None
+        for k in range(len(B)):
+            if k in used:
+                continue
+            v = B[k] - B[ci]
+            cosang = v @ exp / (np.linalg.norm(v) * np.linalg.norm(exp) + 1e-9)
+            ratio = np.linalg.norm(v) / (np.linalg.norm(exp) + 1e-9)
+            if cosang > np.cos(np.radians(30)) and 0.5 < ratio < 2.0:
+                score = cosang - abs(np.log(ratio))
+                if best is None or score > best:
+                    best, bk = score, k
+        if bk is None:
+            out.append(None)
+        else:
+            used.add(bk)
+            out.append(B[bk].tolist())
+    return out
 
 
 def fit_plane(xy, z):
