@@ -14,6 +14,8 @@ DRV-Modbus/runs/
 DRV-Modbus/records/
 DRV-Modbus/tests/out/
 DRV-Modbus/*_last.png
+DRV-Modbus/pen_calibrate_plan.png
+DRV-Modbus/camera.json
 DRV-Modbus/test_food*
 DRV-Modbus/color_detect_snapshot.png
 DRV-Modbus/calibration.bak_*.json

@@ -26,6 +26,7 @@ FAMILIES = {"36h11": cv2.aruco.DICT_APRILTAG_36h11, "25h9": cv2.aruco.DICT_APRIL
 
 class PaperFrame:
     def __init__(self, layout=DEFAULT_LAYOUT, K=DEFAULT_K, dist=None):
+        self.layout_path = layout
         with open(layout, encoding="utf-8") as f:
             self.layout = json.load(f)
         self.K = np.array(K, dtype=np.float64)

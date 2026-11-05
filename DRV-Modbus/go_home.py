@@ -28,19 +28,32 @@ def main():
         sys.exit(f"速度需在 1~{MAX_SPEED}")
 
     with open(os.path.join(HERE, "calibration.json"), encoding="utf-8") as f:
-        home = json.load(f)["home"]
+        cal = json.load(f)
+    home = cal["home"]
+    z_safe = min(home[2], cal["drop"][2])
 
     c = ModbusTcpClient(host=ROBOT_IP, port=502, timeout=3)
     if not c.connect():
         sys.exit("連線手臂失敗")
     try:
-        print("目前位置:", [round(v, 1) for v in request.Get_TCP_Pose(c)])
+        cur = request.Get_TCP_Pose(c)
+        print("目前位置:", [round(v, 1) for v in cur])
         print("home    :", [round(v, 1) for v in home])
+        low = cur[2] < z_safe - 1.0
+        if low:
+            print(f"目前低於安全高度 {z_safe:.1f}:會先『垂直往上』(MovL) 到安全高度,再回 home")
         print(f"速度 {args.speed},MovP (關節式移動,路徑不一定是直線)")
         if input("確認路徑安全後按 Enter 移動 (q 取消): ").strip().lower() == "q":
             return
         refresh(c)   # 等待期間手臂可能已關閉閒置連線
-        send.Go_Position(c, *home, args.speed, send.MovP)
+        try:
+            if low:
+                send.Go_Position(c, cur[0], cur[1], z_safe, *cur[3:], min(args.speed, 20), send.MovL)
+            send.Go_Position(c, *home, args.speed, send.MovP)
+        except (send.CommandIgnored, TimeoutError) as e:
+            sys.exit("\n未到達 home: " + str(e))
+        except send.Interrupted:
+            sys.exit("\n已按 Ctrl+C:送出停止指令,手臂停在目前位置")
         print("已到達 home:", [round(v, 1) for v in request.Get_TCP_Pose(c)])
     finally:
         c.close()
