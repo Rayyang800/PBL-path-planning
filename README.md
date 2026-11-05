@@ -24,7 +24,13 @@ python warp_sort.py             # dry-run:辨識並印出計畫,不動手臂
 python warp_sort.py --go --speed 25
 python warp_calibrate.py --pixels-only   # 相機改裝後重記 tag 像素
 python cam_orient.py --set on            # 相機反裝 180 度
+python go_home.py                        # 回 home (低於安全高度會先垂直抬起)
+python gripper_ctl.py                    # 鍵盤控制夾爪:o 開 / g 夾 / q 離開
+python pen_calibrate.py --pen-loaded     # 筆尖校正 dry-run (看 pen_calibrate_plan.png)
+python pen_calibrate.py --go --pen-loaded
 ```
+
+筆尖校正執行中:Ctrl+C = 停止並回 home;空白鍵 = 暫停選單;o / g = 夾爪開 / 夾。詳見 `PROJECT_SPEC.md` T15。
 
 **安全**:會動手臂的程式先 dry-run;手放急停旁;旗標 `0x031F` 不是 1 時先在教導器清除警報。
 

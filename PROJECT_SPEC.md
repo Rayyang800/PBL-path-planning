@@ -1,6 +1,6 @@
 # 專案規格與 AI 交接文件:視覺導引塗膠/焊道路徑規劃系統
 
-> 版本:2026-11-04 | 用途:讓未來的 AI(或新組員)讀完這份文件就能接手並執行任務
+> 版本:2026-11-05 | GitHub:https://github.com/Rayyang800/PBL-path-planning (public) | 用途:讓未來的 AI(或新組員)讀完這份文件就能接手並執行任務
 > 專案根目錄:`C:\Users\ray20\Desktop\Delta_Arm\`(程式在 `DRV-Modbus\`)
 > 使用者語言:**繁體中文**(對使用者的輸出一律用繁體中文;程式識別字、指令用英文)
 
@@ -59,7 +59,10 @@
 | D4 | 模擬軟體用 **CIROS**,與實機**明確劃分、不做軟體串接**:CIROS 驗證的結果由**人工**整理成實機的安全限制 | 11-04 |
 | D5 | **不寫 AI 學習式接合面辨識**(簡報與文件都不提) | 11-04 |
 | D6 | 夾爪用 DO7(開)/DO8(夾),吸盤(DO1)目前不使用 | 10-14 |
-| D7 | 初始校正改用「**A4 校正紙(四角 AprilTag 36h11、28 mm)+ 筆尖探針法**」:手臂用筆在紙上畫標記,相機看標記回推筆尖偏移與座標轉換;**不依賴力/碰撞回饋**(見 §8 #11)。規劃中,尚未實機 | 11-04 |
+| D7 | 初始校正改用「**校正紙(四角 AprilTag 36h11)+ 筆尖探針法**」:手臂用筆在紙上畫標記,在 home 拍照,由「指令 TCP XY ↔ 標記紙面 mm」擬合仿射轉換(筆尖偏移含在內);**不依賴力/碰撞回饋**(§8 #11)。實作為 `pen_calibrate.py` + `pen_marks.py`;**實機尚未完整跑完一次** | 11-04 → 11-05 |
+| D10 | 實驗室實際使用的校正紙**不是** `a4_calib_sheet.py` 印的:A4 橫放、**tag 29 mm**、ID 0 右上 / 1 左上 / 2 左下 / 3 右下(從 home 看)。版面由 `paper_layout_capture.py` 從相機量出 → `print/lab_sheet_layout.json`(間距 PnP 估 239.3 × 155.6 mm,±1%;仿射擬合會吸收比例誤差)。紙放在工作板中央,**會蓋住舊 ArUco 3、4** | 11-04 |
+| D11 | **接觸判斷用影像**(仍無力回饋):自動探觸每次往下 `--probe-step`(3 mm)畫小十字 → 抬 10 mm → 往畫面下方(手臂 −X,朝基座)移動直到看見 ArUco 1/2 → 拍照與下降前比對「新變暗的像素」(任何顏色)→ 有就記錄 z。第一點由人工下降到筆尖離紙約 5 mm 再按 `a` 交給自動 | 11-05 |
+| D12 | 舊 `calibration.json`(ArUco 1~4)在筆尖校正流程中**只當粗略換算**(預測點位、找 ROI,誤差可達 ±20 mm);精確轉換以 `calibrations/pen_paper/latest.json` 為準 | 11-04 |
 | D8 | 第一個驗證工件先做 **B(兩片黑色平面板縫合塗)**,板子小於 A4 | 11-04 |
 | D9 | **每次執行與校正都要留紀錄且不覆蓋**(原始影像、指令、回讀位姿、校正版本),格式見 §15。用途:重現、統計、手動餵給 CIROS、比對模擬與實機的落差 | 11-04 |
 
@@ -180,14 +183,14 @@
 |---|---|---|---|
 | `0x00F0`(12 個) | 讀 | TCP 位姿 x,y,z,rx,ry,rz(各 int32 ×0.001 → mm/度) | [已驗證] |
 | `0x031F`(1 個) | 讀 | **到位旗標**:`1` = 閒置/已到位;`2` = 忙碌**或異常卡住** | [已驗證](卡 2 的情況見 §8) |
-| `0x0300` | 寫 | 指令碼:`301` = MovP、`302` = MovL、`601~612` = Jog、`0` = 停止。送出後控制器會把它清回 0 | 301 [已驗證];302、Jog [未驗證] |
+| `0x0300` | 寫 | 指令碼:`301` = MovP、`302` = MovL、`601~612` = Jog、`0` = 停止。送出後控制器會把它清回 0 | 301、302 [已驗證](11-04 pen_calibrate 的 MovL 步進有動);Jog [未驗證];**`0` 能否中途停止 MovP/MovL [未驗證]**(`send.Stop()` 會在送出後讀回位置確認) |
 | `0x0324` | 寫 | 速度(以 1~50 使用;確切單位 `[假設]` 為百分比) | [已驗證可寫入並讀回] |
 | `0x0330`(12 個) | 寫 | 目標位姿(同 TCP 格式),先寫目標、再寫速度、最後寫 `0x0300` 指令碼 | [已驗證] |
 | `0x02FE` | 寫 | DO 輸出位元遮罩(見 §4.3) | [已驗證] |
 
 其餘位址(例如 `0x02FA` 觀察到值 8、`0x0318~0x0323` 狀態區)用途**未知**,不要寫入。
 
-**已知的設計缺陷 `[假設]`**:`send.Go_Position` 送出指令後立刻輪詢旗標,若控制器尚未把旗標從 1 改成 2,會**提前判定到位**。若發現動作沒完成就進入下一步,改成「先等旗標變 2 或位置開始變化,再等回 1」,或在送出後 sleep 0.2 秒並比對目標位姿。
+**旗標競態 `[已確認,已修正 11-04]`**:原本 `Go_Position` 送出後只等旗標 = 1,而旗標本來就是 1,手臂沒動也會印 `Move done!`(11-04 `go_home.py` 實際發生)。現在:位移 > 1 mm 時先等「旗標變 ≠1 或位置變化 > 0.3 mm」,2 秒內都沒有 → `CommandIgnored`(繼承 `TimeoutError`);到位後核對位置,與目標差 > 1 mm 也丟 `CommandIgnored`。≤ 1 mm 的小步不做開始檢查(呼叫端另外 sleep 0.3 s)。
 
 ---
 
@@ -243,7 +246,7 @@
 
 | 檔案 | 內容 | 備註 |
 |---|---|---|
-| `drv_modbus/send.py` | `Go_Position(c,x,y,z,rx,ry,rz,speed=20,mov=MovP,block=True,timeout=120)`、`Suction_ON/OFF`、`Jog_*` | **本地修改**:加了 `timeout`(逾時 raise `TimeoutError`)與 `time.sleep(0.02)` 輪詢間隔 |
+| `drv_modbus/send.py` | `Go_Position(c,x,y,z,rx,ry,rz,speed=20,mov=MovP,block=True,timeout=120,start_timeout=2,arrive_tol=1,on_poll=None)`、`Stop(c)`、`Suction_ON/OFF`、`Jog_*`;例外 `CommandIgnored`、`Interrupted` | **本地修改**:逾時、開始/到位檢查(§5);`on_poll()` 回傳 True 或 Ctrl+C → 寫 `0x0300=0` 並丟 `Interrupted("key"/"ctrl_c")`。舊腳本 `except TimeoutError` 會接到 `CommandIgnored`,但**不會**接到 `Interrupted`(會印 traceback,停止指令已送出) |
 | `drv_modbus/request.py` | `Get_TCP_Pose(c)` → `(x,y,z,rx,ry,rz)`、`Get_Pose_Flag(c)` | 上游原檔;讀取失敗回傳 `None` 並印 `request error!` |
 | `drv_modbus/gripper.py`(新) | `Gripper_Open(c)`、`Gripper_Close(c)`(寫 `0x02FE` = 64/128,sleep 1 秒) | 見 §4.3 |
 | `drv_modbus/conn.py`(新) | `refresh(c)`:關閉並重連 | 任何「等待使用者/長時間思考」之後、讀寫之前都要呼叫 |
@@ -257,7 +260,12 @@
 | `warp_calibrate.py` | 互動式校正:使用者用教導器移到 home → 記錄 tag 像素與 home;再依序把 TCP 對準 tag 1~4 中心、吸取高度、放置點;寫 `calibration.json` | **否**(只讀) | [已驗證] 使用者已用它產生目前的校正檔 |
 | `warp_pick.py` | `--color <c>` 找單一顏色物體 → 手臂 XY;`--go` 才取放(吸盤→已改**夾爪**) | `--go` 才動 | dry-run [已驗證];`--go` 曾在 10-21 卡住(手臂拒絕指令,見 §8);夾爪取放流程**未完整驗證** |
 | `warp_sort.py` | 依顏色分類:**綠色筆蓋 → tag 1/2 中點**、**藍色 → tag 3/4 中點**;夾取高度 = `z_pick`+10−`--pick-down`(10)、放置高度 = `z_pick`+10−`--place-down`(9);安全高度 = `min(home z, drop z)` | `--go` 才動 | dry-run [已驗證](10-28 / 11-04 皆辨識正確);實機 **[未驗證]** |
-| `go_home.py` | 低速回到 `calibration.json` 的 home,預設速度 **40**(使用者改的),上限 50 | 是(需 Enter 確認) | 使用者改過預設速度(40),且之後回報 TCP 與 home 差 0.0 mm,應已執行成功(無日誌佐證) |
+| `go_home.py` | 回到 `calibration.json` 的 home,預設速度 **40**(使用者改的),上限 50;**低於安全高度 567.8 時先垂直 MovL 抬起**再 MovP 回 home;沒動會報錯 | 是(需 Enter 確認) | [已驗證] 11-04 從 (364,−7,709) 回 home 成功(第一次手臂沒執行指令,教導器處理後第二次成功) |
+| `gripper_ctl.py` | 鍵盤即時控制夾爪:`o` 開、`g` 夾、`s` 讀 DO、`q`/Esc 離開(不需 Enter;Windows `msvcrt`) | 只動夾爪 | [未驗證] |
+| `paper_layout_capture.py` | 從相機(或 `--image`)量實際校正紙的 tag 排列與方向 → `print/lab_sheet_layout.json`;`--tag-mm` 必填,`--dx/--dy` 可填尺量間距(否則 PnP 估) | 否 | [已驗證] 11-04 實拍:角點擬合殘差 0.19 mm |
+| `pen_calibrate.py` | 筆尖探觸校正(D7、D11)。預設 dry-run(存 `pen_calibrate_plan.png`)。`--go` 流程:移到第一點上方 → (可選)開夾爪裝筆、倒數 3 秒夾緊 → 每點找接觸高度 → 畫大十字(半長 10 mm)→ 全部完成回 home 拍照 → `pen_marks.analyze` → 存 `calibrations/pen_paper/`。點位 `--pattern cross`(預設,紙中心上右下左各偏 `--step` 20 mm)/ `left` / `spread`,`--shift-x/y`;只允許在 tag 內緣再縮 12 mm 的範圍內。探觸 `--probe auto`(預設)/`manual`;`--look base`(預設)/`lift`/`home`;`--probe-step 3`、`--auto-max 8`、`--base-lift 10`、`--base-tags 1 2`、`--ink any`。`--resume <run>` 接續中斷的紀錄(用先前墨點修正偏移)。**按鍵**:Ctrl+C = 停止→垂直抬起→回 home 結束;空白/Esc/p = 停止並選單(r 重做、m 改人工、s 跳過、h 回 home、q 結束、o/g 夾爪);移動中 `o`/`g` 即時開夾夾爪(手臂不停) | `--go` 才動 | 部分實機:MovL 步進、裝筆、人工下降 [已驗證];自動探觸 `look=lift/home` 跑過但**未成功**(§8 #14、#15);`look=base`、停止鍵、選單、完整分析 **[未驗證]** |
+| `pen_marks.py` | 離線分析:`find_cross` / `find_dot`(前後照片對齊相減 `new_ink_mask`)、`new_ink_blobs`(同一位置前後照片的新筆跡)、`fit_affine`、`fit_plane`、`analyze`、`overlay`;CLI `python pen_marks.py runs\<pen_calib>` 重新分析 | 否 | PASS(`tests/test_pen_marks.py`、`tests/test_new_ink.py`);真實照片:前後相減找到紅點 39 px 與灰點 9 px |
+| `tests/test_pen_marks.py` / `test_new_ink.py` / `test_stop.py` | 十字與墨點擬合(含 7 mm 外的舊髒點)/ 新筆跡偵測 / 假 Modbus 驗證停止指令會寫入 | 否 | PASS |
 | `record_apriltags.py` | 即時預覽 ArUco/AprilTag,空白鍵記錄相機座標 + 手臂 TCP → `records/*.csv/.jsonl` | **否** | [已驗證] |
 | `color_detect.py` | HSV 多色塊偵測(red/orange/yellow/green/blue/purple),可即時或 `--image` | 否 | [已驗證] |
 | `red_detect_demo.py` | 課程投影片「紅色輪廓」範例的實作 | 否 | [已驗證] |
@@ -315,6 +323,11 @@ python go_home.py --speed 10
 | 10 | 長中文單行讓 Python 3.8 報 `Non-UTF-8 code`(檔案實為合法 UTF-8) | 推測是 3.8 分詞器處理長行的問題 | 檔案開頭加 `# -*- coding: utf-8 -*-` 後正常 |
 | 11 | **沒有可用的接觸/力/碰撞訊號** | Modbus 只確認到位姿(`0x00F0`)與到位旗標(`0x031F`);位置控制下,筆碰到紙不會有任何訊號。DRV 若有碰撞保護 `[假設]` 也是急停式、需教導器復歸(10-21 已見過鎖死情形),不能當感測器 | **不要寫「往下直到有回饋」**。改用人在迴路步進下降、或用筆跡/影像推算接觸高度;查 DRAStudio 手冊確認是否有碰撞偵測 `[待確認]` |
 | 12 | 相機轉 180 度安裝 | 影像上下左右顛倒;像素→手臂的 homography 由當下 4 個 tag 求得,**本身不受影響**,但畫面方向、`warp_sort` 的 tag 偏移檢查會不同,且改裝通常會改變相機相對夾爪的位置 | 用 `cam_orient.py`(取像後先轉正;auto 依 tag 排列與 `calibration.json` 比較判斷);改裝後跑 `warp_calibrate.py --pixels-only`。有用內參的地方(深度反投影、PnP)要用 `raw_point()`/`rotated_K()`;`paper_frame`/`seam_boards` 用原始影像做 PnP,本來就不受方向影響,未接入 |
+| 13 | `go_home.py` 印「已到達 home」但位置沒變 | 手臂沒執行指令(旗標維持 1,速度暫存器有寫入);加上旗標競態(§5) | 已修正 `Go_Position`。手臂不執行時看教導器:模式(外部/遠端)、伺服 ON、警報 |
+| 14 | 自動探觸「抬高拍照」看不到筆跡 | 相機裝在夾爪**前側**(+X 方向):手臂在紙上方時,相機視野在筆尖前方;抬 40/80 mm 拍到的是紙外的鋁軌,紙只在畫面下緣(`runs/20261104-195948_pen_calib/images/touch_0_hit.jpg`)。結果程式一路往下 9 mm | 改成 `--look base`(往基座方向移到看見 ArUco 1/2)或 `--look home`(慢但確定看得到整張紙) |
+| 15 | 自動探觸把**人的手**當成紅點 | 紅色 HSV 範圍包含膚色;當時 ROI 是整張畫面 | ROI 限制在紙上可點範圍 + 預定點 35 mm 內(home)、或排除畫面邊緣 30 px 並記住第一次的位置(base/lift);最小面積 12 px。**那次 run 的 z=468.8 是錯的,不要拿來 `--resume`** |
+| 16 | 只找紅色會漏掉筆跡 | 筆輕碰留下的是灰點,不是紅點(紅點反而是那次出錯時留下的) | `--ink any`:只看「變暗 > 25」;探觸改畫小十字(半長 4 mm)比點容易辨識 |
+| 17 | 原本 Ctrl+C 不會讓手臂停 | Ctrl+C 只中斷 Python,控制器會把已收到的移動走完 | `Go_Position` 中斷時寫 `0x0300=0`,再讀兩次位置確認;**仍未實機驗證,實體急停是唯一可靠的停止方式** |
 
 ---
 
@@ -457,7 +470,16 @@ python go_home.py --speed 10
 ### T14 報告與文件
 - 每週進度報告投影片(§9.2 格式)、期末 Word 報告、海報、影片腳本。簡報風格見 §14。
 
-### T15 [動作] 初始校正:A4 校正紙 + 筆尖探針(D7;手臂回來後做)
+### T15 [動作] 初始校正:校正紙 + 筆尖探針(D7、D10、D11)— **進行中**
+- **現況(11-05)**:程式已完成(`pen_calibrate.py`、`pen_marks.py`),合成測試全過。實機跑了 4 次都中途停止:人工下降可用;自動探觸在 lift/home 看不到或誤判(§8 #14–16)。下一次照預設 `--look base --probe-step 3` 跑:
+  ```powershell
+  python go_home.py                          # 低於安全高度會先垂直抬起
+  python pen_calibrate.py --pen-loaded       # dry-run,看 pen_calibrate_plan.png 的紫色箭頭 (往畫面下方)
+  python pen_calibrate.py --go --pen-loaded  # 第一點人工下降到筆尖離紙約 5 mm 按 a
+  ```
+  第一次跑時:手放急停旁;在慢速移動中按一次空白鍵,確認 `0x0300=0` 真的能停(§8 #17);每步照片在 `runs/<id>/images/probe_*`。
+- **完成條件**:4 點都找到、`pen_marks` 擬合 RMS ≤ 1 mm、`calibrations/pen_paper/latest.json` 產生;之後 T16 用它把紙面縫合線轉成手臂 XY。
+- 以下為 11-04 規劃時的原始描述(部分已被上面取代,例如改用實驗室的 29 mm 紙、改成自動探觸):
 - **前置**:列印 `print/a4_calib_sheet.pdf`(實際大小 100%,用尺量 100 mm 比例尺與 tag 邊長;實測不是 28.0 就 `python a4_calib_sheet.py --json-only --tag-mm <實測>`)。紙平貼在工作板中央、四邊貼膠帶,**不要遮住外圍舊 ArUco**。從 home 拍照確認 `PaperFrame.describe()` 顯示 4/4 tag、殘差 RMS < 0.5 mm。
 - **動作流程(每步需使用者確認,預設 dry-run)**:`go_home` → 移到「裝筆位置」(安全高度,例如紙中心上方 z=567.8,**不要在 home 最高點裝筆**)→ 夾爪開 → 使用者放筆並**手離開** → Enter、倒數 3 秒後夾緊 → **人在迴路下降找接觸**:從 z_plane+30 mm 起,以 5→2→1→0.5 mm 步進、每步按 Enter,使用者目視確認筆尖是否碰紙;**硬下限 z_plane−2 mm**(`z_plane` = `calibration.json` 的 `z_pick`)→ 記錄 `z_touch`,抬 3 mm → 在紙面分散的 ≥ 3 個點(建議 5 個)各畫一個「+」(兩筆各約 10 mm,中心 = 指令的 TCP XY)→ 回 home → 拍照。
 - **離線分析**(可先寫,用合成影像測):偵測紙上 4 tag → 紙面 mm;偵測各「+」中心 → 紙面 mm;與指令的手臂 XY 配對擬合 2D 轉換(相似/仿射)→ 得到**筆尖 XY 偏移、轉換殘差(mm)、z_touch 的平面擬合(紙面傾斜)**;輸出 `pen_calibration.json`。
@@ -492,10 +514,12 @@ python go_home.py --speed 10
 7. KPI 數值是否已與教授確認?
 8. 板子與 tag 是否固定?(§6.3)
 9. 課程簡報寫的繳交項目是「CIROS 專案」——目前已與此一致(D4)。
-10. A4 紙的放置方向(直放 210 寬 / 橫放)與位置;如何確保不遮到舊 ArUco(估計直放可避開左右兩側舊 tag,需實物確認)。
+10. ~~A4 紙的放置方向~~ → 已知:橫放,蓋住舊 ArUco 3、4(D10)。紙上另貼了一張較小的白紙當「每次換新的白紙」用。
 11. 兩片黑板的**厚度、大小、材質是否反光**。
 12. 能在黑板上留下可見筆跡的筆(白/銀色油性筆?);筆的種類與長度、夾持方式。
-13. 實際列印的 tag 邊長(用尺量;預設 28.0 mm 是使用者「記得」的值)。
+13. ~~tag 邊長~~ → 使用者告知 **29 mm**(D10)。仍可用尺量 tag 0→1、1→2 角到角距離,以 `paper_layout_capture.py --dx --dy` 取代 PnP 估計值。
+15. 筆的實際顏色與筆頭硬度(探觸每步 3 mm 時會壓進紙 0~3 mm)。
+16. 往基座方向拍照時(D11),筆尖離紙只有 10 mm 並經過 ArUco 1/2 卡片上方——卡片是否平貼、有無高於 10 mm 的障礙物。
 14. DRV 是否有碰撞偵測(DRAStudio 手冊);若有,靈敏度與觸發後的復歸方式。
 
 ---
@@ -512,6 +536,9 @@ python go_home.py --speed 10
 | 11-04 | (手臂暫時不在)規劃筆尖探針式初始校正(D7、D8);新增 `a4_calib_sheet.py`、`paper_frame.py`、`seam_boards.py`、`tests/test_seam_synthetic.py`(僅合成場景驗證,尚無真實影像);新增 T15、T16 |
 | 11-04 | 新增執行紀錄與校正版本庫 `run_log.py`(D9、§15)、`tests/test_run_log.py`;`seam_boards.py` 改為預設存 `runs/` 紀錄;把既有 `calibration.json` 匯入 `calibrations/warp_plane/` 當作基準版(2026-10-21);新增 T17 |
 | 11-04 | 手臂連線檢查(唯讀):ping/Modbus 正常,但旗標 **2**、位姿 (444.0, 0.0, 753.9, −180, −90, −16) 不在 home;新增相機反裝 180 度支援 `cam_orient.py`(`--rot180 auto/on/off`、`camera.json`),接入 `warp_pick`/`warp_sort`/`warp_calibrate`/`color_detect`/`record_apriltags`;`warp_calibrate.py --pixels-only`(只重記 home 與 tag 像素)並自動備份舊檔、存版本;`tests/test_cam_orient.py` PASS |
+| 11-04 | 專案上 GitHub(`Rayyang800/PBL-path-planning`,public;協作者 `70130H940410`)。`DRV-Modbus/.git` 改名 `.git_upstream` 保留原作者歷史 |
+| 11-04 | 實機:相機接上(D435,USB 3.2)、手臂旗標恢復 1、`go_home` 成功;發現實驗室校正紙為 29 mm 橫放(D10)→ `paper_layout_capture.py`;修正 `Go_Position` 旗標競態(§8 #13);新增 `pen_calibrate.py` / `pen_marks.py`(先畫「+」→ 改點一下 → 改自動探觸畫小十字)、`--resume`、`--pattern cross` |
+| 11-05 | 自動探觸問題排查(§8 #14–16)→ `--look base`(往畫面下方直到看見 ArUco 1/2)、`--ink any`、`--probe-step 3`;即時中斷(Ctrl+C 回 home、空白鍵選單)與夾爪 `o/g`、`gripper_ctl.py`;`tests/test_new_ink.py`、`test_stop.py`;push `7af52c8` |
 
 ---
 
