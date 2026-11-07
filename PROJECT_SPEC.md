@@ -72,6 +72,7 @@
 | D10 | 實驗室實際使用的校正紙**不是** `a4_calib_sheet.py` 印的:A4 橫放、**tag 29 mm**、ID 0 右上 / 1 左上 / 2 左下 / 3 右下(從 home 看)。版面由 `paper_layout_capture.py` 從相機量出 → `print/lab_sheet_layout.json`(間距 PnP 估 239.3 × 155.6 mm,±1%;仿射擬合會吸收比例誤差)。紙放在工作板中央,**會蓋住舊 ArUco 3、4** | 11-04 |
 | D11 | **接觸判斷用影像**(仍無力回饋):自動探觸每次往下 `--probe-step`(3 mm)畫小十字 → 抬 10 mm → 往畫面下方(手臂 −X,朝基座)移動直到看見 ArUco 1/2 → 拍照與下降前比對「新變暗的像素」(任何顏色)→ 有就記錄 z。第一點由人工下降到筆尖離紙約 5 mm 再按 `a` 交給自動 | 11-05 |
 | D13 | **快速筆尖校正 `pen_quick_calib.py` 取代 D11 成為主要流程**:人只找一次接觸高度 `z_touch`(工作面視為等高),其餘 4 點用同一 z、不拍照,點在第一點 ±X/±Y `--step`(10 mm)內(不跑出工件、筆不再越壓越深);最後回 home 拍一張,前後相減找墨點,擬合**旋轉+平移(比例 1:1)**。理由:D11 太慢、壓壞筆尖、點太分散會塗到底下的 A4。點最好畫在工件的膠帶上(可擦) | 11-05 |
+| D14 | **護貝校正紙 → 整張紙校正 `pen_sheet_calib.py`**(與 D13 並存):tag 紙護貝後白板筆可擦,所以點可以散佈整張紙(預設 3×3 小十字,涵蓋約 189×107 mm),擬合**完整仿射**並以**留一法**報告預測誤差;第一點畫完先回 home 拍照修正粗略換算(位移),其餘點固定 `z_touch` 不拍照。校正完紙不動、筆跡可擦可不擦。D13 適合直接在工件上快速校正;D14 精度與涵蓋範圍較好 | 11-08 |
 | D12 | 舊 `calibration.json`(ArUco 1~4)在筆尖校正流程中**只當粗略換算**(預測點位、找 ROI,誤差可達 ±20 mm);精確轉換以 `calibrations/pen_paper/latest.json` 為準 | 11-04 |
 | D8 | 第一個驗證工件先做 **B(兩片黑色平面板縫合塗)**,板子小於 A4 | 11-04 |
 | D9 | **每次執行與校正都要留完整紀錄且不覆蓋**(彩色+深度快照、相機參數、指令與 10 Hz 軌跡、夾爪、終端輸出、git 版本、校正版本),dry-run/失敗/中止也存;格式見 §15、規則見 §0.4。用途:離線測試、重現、統計、手動餵給 CIROS、比對模擬與實機的落差 | 11-04 → 11-05 v2 |
@@ -275,6 +276,7 @@
 | `paper_layout_capture.py` | 從相機(或 `--image`)量實際校正紙的 tag 排列與方向 → `print/lab_sheet_layout.json`;`--tag-mm` 必填,`--dx/--dy` 可填尺量間距(否則 PnP 估) | 否 | [已驗證] 11-04 實拍:角點擬合殘差 0.19 mm |
 | `pen_calibrate.py` | 筆尖探觸校正(D7、D11)。預設 dry-run(存 `pen_calibrate_plan.png`)。`--go` 流程:移到第一點上方 → (可選)開夾爪裝筆、倒數 3 秒夾緊 → 每點找接觸高度 → 畫大十字(半長 10 mm)→ 全部完成回 home 拍照 → `pen_marks.analyze` → 存 `calibrations/pen_paper/`。點位 `--pattern cross`(預設,紙中心上右下左各偏 `--step` 20 mm)/ `left` / `spread`,`--shift-x/y`;只允許在 tag 內緣再縮 12 mm 的範圍內。探觸 `--probe auto`(預設)/`manual`;`--look base`(預設)/`lift`/`home`;`--probe-step 3`、`--auto-max 8`、`--base-lift 10`、`--base-tags 1 2`、`--ink any`。`--resume <run>` 接續中斷的紀錄(用先前墨點修正偏移)。**按鍵**:Ctrl+C = 停止→垂直抬起→回 home 結束;空白/Esc/p = 停止並選單(r 重做、m 改人工、s 跳過、h 回 home、q 結束、o/g 夾爪);移動中 `o`/`g` 即時開夾夾爪(手臂不停) | `--go` 才動 | 部分實機:MovL 步進、裝筆、人工下降 [已驗證];自動探觸 `look=lift/home` 跑過但**未成功**(§8 #14、#15);`look=base`、停止鍵、選單、完整分析 **[未驗證]** |
 | `pen_quick_calib.py` | **快速筆尖校正(D13,主要流程)**。dry-run 存 `pen_quick_plan.png`。`--go`:home 拍前照 → 第一點上方 → (可選)裝筆 → 人工下降(`x 2`/`y -3` 微調,最多 5 mm、會先抬 2 mm)按 `c` 記 `z_touch` → 其餘 4 點:抬 `--hop` 3 mm、移 `--step` 10 mm、下到 `z_touch - --press`(預設 0)停 `--dwell` 0.5 s → 抬到安全高度回 home 拍後照 → `analyze()`:前後相減(變暗量加權中心)、`match_pattern` 依粗略方向配對、`fit_rigid`(可鏡像)、與舊 ArUco 旋轉交叉檢查(>5° 警告)、估計離第一點 100 mm 的誤差 → 存 `calibrations/pen_paper/`(`method: quick`)。`--start-paper X Y` 第一點紙面座標;`--surface-h` 點在工件上時填工件厚度(視差);`--analyze runs\<id>` 重新分析。按鍵:Ctrl+C / 找第一點時的空白鍵 → 抬起回 home 結束;後 4 點中空白鍵 → r 重做 / s 跳過 / h 回 home 用已完成點分析 / q 結束 | `--go` 才動 | 合成測試 PASS(`tests/test_quick_calib.py`:5 點全對,72 mm 外誤差 ≤0.1 mm);**實機未跑(連 dry-run 都還沒,11-05 手臂離線)** |
+| `pen_sheet_calib.py` | **護貝紙整張校正(D14)**。dry-run 存紀錄與 `pen_sheet_plan.png`。`--go`:home 拍前照 → 第一點(最靠近紙中心的格點)人工下降 + x/y 微調,按 `c` 記 `z_touch` → 畫小十字(`--stroke` 4 mm)→(預設)回 home 拍 `home_first`,`find_first_mark` 求偏移修正其餘點 → 其餘格點抬 `--hop` 5 mm 平移、固定 z 畫十字(`--touch-all` 每點人工確認高度)→ 回 home 拍後照 → `analyze()`:前後相減 `new_ink_components`(排除 tag)、`assign_nearest`(半徑 20 mm)、剛體與仿射擬合 + 留一法,選留一法較好者 → 存 `pen_paper`(`method: sheet`)。`--grid COLS ROWS`(預設 3 3)、`--margin` 12、`--no-refine`、`--press`、`--surface-h`、`--analyze runs\<id>`。十字面積明顯偏小會提示紙面不平。按鍵同 quick | `--go` 才動 | 合成測試 PASS(`tests/test_sheet_calib.py`:粗略換算偏 15 mm + 旋轉 1.5°、擦痕髒點;3×3 整張紙誤差 ≤ 0.23 mm、留一法 ≤ 0.11 mm;比例誤差 0.6% 由仿射吸收);**實機未跑** |
 | `pen_marks.py` | 離線分析:`find_cross` / `find_dot`(前後照片對齊相減 `new_ink_mask`)、`new_ink_blobs`(同一位置前後照片的新筆跡)、`fit_affine`、`fit_rigid`(比例 1:1,可鏡像)、`match_pattern`(中心+方向配對)、`fit_plane`、`analyze`、`overlay`;CLI `python pen_marks.py runs\<pen_calib>` 重新分析 | 否 | PASS(`tests/test_pen_marks.py`、`tests/test_new_ink.py`);真實照片:前後相減找到紅點 39 px 與灰點 9 px |
 | `tests/test_pen_marks.py` / `test_new_ink.py` / `test_stop.py` | 十字與墨點擬合(含 7 mm 外的舊髒點)/ 新筆跡偵測 / 假 Modbus 驗證停止指令會寫入 | 否 | PASS |
 | `record_apriltags.py` | 即時預覽 ArUco/AprilTag,空白鍵記錄相機座標 + 手臂 TCP → `records/*.csv/.jsonl` | **否** | [已驗證] |
@@ -492,7 +494,8 @@ python go_home.py --speed 10
   python pen_quick_calib.py --go --pen-loaded        # 人工下降,剛好點出顏色按 c,其餘自動
   ```
   第一次跑時:手放急停旁;在後 4 點移動中按一次空白鍵,確認 `0x0300=0` 真的能停(§8 #17)。
-- **完成條件**:5 點都對應到、RMS ≤ 0.5 mm、與舊 ArUco 旋轉差 < 5°、`calibrations/pen_paper/latest.json`(`method: quick`)產生;之後 T16 用它把紙面縫合線轉成手臂 XY(並用同一個 `z_touch`)。
+- **護貝紙版(D14)**:`python pen_sheet_calib.py --pen-loaded`(dry-run)→ `python pen_sheet_calib.py --go --pen-loaded`。完成條件:9 點全找到、留一法最大 ≤ 1 mm。之後描繪腳本讀 `calibrations/pen_paper/latest.json`(看 `method`)。
+- **完成條件(quick)**:5 點都對應到、RMS ≤ 0.5 mm、與舊 ArUco 旋轉差 < 5°、`calibrations/pen_paper/latest.json`(`method: quick`)產生;之後 T16 用它把紙面縫合線轉成手臂 XY(並用同一個 `z_touch`)。
 - 注意:點集中在 ±10 mm,旋轉誤差會放大到遠處(程式會印「離第一點 100 mm 估計誤差」);要畫的範圍大時加大 `--step`(工件夠大的話)。
 - 以下為 11-04 規劃時的原始描述(部分已被上面取代,例如改用實驗室的 29 mm 紙、改成自動探觸):
 - **前置**:列印 `print/a4_calib_sheet.pdf`(實際大小 100%,用尺量 100 mm 比例尺與 tag 邊長;實測不是 28.0 就 `python a4_calib_sheet.py --json-only --tag-mm <實測>`)。紙平貼在工作板中央、四邊貼膠帶,**不要遮住外圍舊 ArUco**。從 home 拍照確認 `PaperFrame.describe()` 顯示 4/4 tag、殘差 RMS < 0.5 mm。
@@ -556,6 +559,7 @@ python go_home.py --speed 10
 | 11-05 | 自動探觸問題排查(§8 #14–16)→ `--look base`(往畫面下方直到看見 ArUco 1/2)、`--ink any`、`--probe-step 3`;即時中斷(Ctrl+C 回 home、空白鍵選單)與夾爪 `o/g`、`gripper_ctl.py`;`tests/test_new_ink.py`、`test_stop.py`;push `7af52c8` |
 | 11-05 | 使用者回報 D11 太慢、壓壞筆尖、點跑出工件(§8 #18)→ 新增 `pen_quick_calib.py`(D13)、`pen_marks.fit_rigid` / `match_pattern`、`new_ink_mask(return_drop=True)`、`tests/test_quick_calib.py`(PASS);修正墨點中心偏 0.8 mm(§8 #19)。手臂當時離線,實機未測 |
 | 11-05 | 舊紀錄分析:10-21 的 `records/` tag 深度 → 深度相對精度約 ±1 mm(4 tag 共平面殘差 ±1 mm、傾角 5.3° vs 手臂 4.9°)。**紀錄 v2**:`rs_capture.py`、`run_log`(深度快照、console.log、git、current()、run_main)、`send`/`gripper` 自動記軌跡;接入 §15.3.1 所列腳本;新增 `depth_height.py`、`tests/test_run_log_v2.py`、`tests/test_depth_height.py`(全部 9 個測試 PASS)。實機/實際相機尚未用 v2 跑過 |
+| 11-08 | 使用者將 tag 校正紙護貝(白板筆可擦)→ 新增 `pen_sheet_calib.py`(D14)、`pen_marks.new_ink_components` / `assign_nearest` / `loo_errors`、`tests/test_sheet_calib.py`(10 個測試全 PASS)。手臂離線,實機未測 |
 
 ---
 

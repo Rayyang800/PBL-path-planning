@@ -30,6 +30,13 @@ python pen_quick_calib.py --pen-loaded       # 快速筆尖校正 dry-run (看 p
 python pen_quick_calib.py --go --pen-loaded  # 人工找一次高度按 c,其餘 4 點自動,最後拍照計算
 ```
 
+護貝校正紙 (白板筆可擦) 用整張紙校正,精度與範圍較好:
+
+```bash
+python pen_sheet_calib.py --pen-loaded       # dry-run (看 pen_sheet_plan.png,3x3 小十字)
+python pen_sheet_calib.py --go --pen-loaded  # 第一點人工找高度按 c -> 回 home 修正 -> 其餘自動 -> 分析 (留一法誤差)
+```
+
 筆尖校正執行中:Ctrl+C = 停止並回 home;空白鍵 = 暫停選單;o / g = 夾爪開 / 夾。
 舊的自動探觸版 `pen_calibrate.py` 仍保留。詳見 `PROJECT_SPEC.md` T15、D13。
 

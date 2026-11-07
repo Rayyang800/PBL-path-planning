@@ -148,6 +148,51 @@ def new_ink_blobs(ref, img, ink="any", min_area=6, min_drop=25):
     return sorted(blobs, reverse=True)
 
 
+def new_ink_components(before, after, pf_after, pf_before, min_drop=30, min_area=3, exclude=None):
+    """前後兩張 home 照片 (紙面單應對齊) 相減,回傳新筆跡的連通區:[(面積, 變暗量加權中心 (u,v)), ...]。
+    不做形態學 (偶數核會讓中心偏 1 px);exclude = 不要看的區域遮罩 (例如 tag)。"""
+    ink, drop = new_ink_mask(before, after, pf_after, pf_before, min_drop=min_drop, return_drop=True)
+    m = (ink > 0).astype(np.uint8)
+    if exclude is not None:
+        m &= (exclude == 0).astype(np.uint8)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+    out = []
+    for k in range(1, n):
+        if st[k, cv2.CC_STAT_AREA] < min_area:
+            continue
+        ys, xs = np.nonzero(lab == k)
+        w = drop[ys, xs]
+        out.append((int(st[k, cv2.CC_STAT_AREA]), ((xs * w).sum() / w.sum(), (ys * w).sum() / w.sum())))
+    return sorted(out, key=lambda b: -b[0])
+
+
+def assign_nearest(blobs, predicted_uv, radius_px):
+    """每個預測點配一個最近、且在半徑內、尚未被用掉的筆跡 (由近到遠貪婪配對)。回傳 [index 或 None]。"""
+    pairs = []
+    for i, p in enumerate(predicted_uv):
+        for k, (_, c) in enumerate(blobs):
+            d = float(np.hypot(c[0] - p[0], c[1] - p[1]))
+            if d <= radius_px:
+                pairs.append((d, i, k))
+    out, used = [None] * len(predicted_uv), set()
+    for d, i, k in sorted(pairs):
+        if out[i] is None and k not in used:
+            out[i] = k
+            used.add(k)
+    return out
+
+
+def loo_errors(P, C, fit):
+    """留一法:每次拿掉一點,用其餘點擬合,預測被拿掉那點的誤差 (mm)。"""
+    P, C = np.asarray(P, float), np.asarray(C, float)
+    errs = []
+    for i in range(len(P)):
+        m = np.arange(len(P)) != i
+        A, t, _ = fit(P[m], C[m])
+        errs.append(float(np.linalg.norm(A @ P[i] + t - C[i])))
+    return errs
+
+
 def tag_exclusion_mask(shape, pf, grow_mm=4.0):
     """把 4 個 tag (外擴 grow_mm) 畫成遮罩,避免把 tag 當成筆跡。"""
     mask = np.zeros(shape[:2], np.uint8)
