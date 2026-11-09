@@ -57,3 +57,12 @@ python pen_sheet_calib.py --go --pen-loaded  # 第一點人工找高度按 c -> 
 
 `runs/`、`records/`、測試輸出影像與舊版簡報未上傳(見 `.gitignore`)。
 `calibration.json` 是本組工作台的校正結果,換工作台或移動 tag 後要重新校正。
+
+## Web 控制台
+
+```bash
+python webui\server.py        # 在 DRV-Modbus 下執行,開 http://127.0.0.1:8080 (只限本機)
+```
+
+即時 RealSense (彩色 / 深度 / 相對紙面高度圖)、手臂狀態、最新校正結果、工件與任務設定、一鍵啟動校正 (新主控台視窗,鍵盤操作照舊)、執行紀錄瀏覽、存快照。
+右側有鍵盤按鍵說明,任務執行中頂端會顯示該任務的按鍵提示。「送停止指令」未驗證,實體急停為主。

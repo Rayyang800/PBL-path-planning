@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delta Arm 控制台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Delta Arm 控制台</div>
+  <div class="badges">
+    <span class="badge" id="b-robot">手臂 —</span>
+    <span class="badge" id="b-camera">相機 —</span>
+    <span class="badge" id="b-paper">校正紙 —</span>
+    <span class="badge" id="b-task">任務 —</span>
+  </div>
+  <button class="btn danger" id="btn-stop" title="寫 0x0300=0;對移動中的手臂是否有效未驗證,實體急停才可靠">送停止指令</button>
+</header>
+<div class="keybar" id="keybar" hidden></div>
+
+<main class="layout">
+  <section class="col-main">
+    <div class="card video-card">
+      <div class="card-head">
+        <div class="tabs" id="view-tabs">
+          <button data-view="color" class="active">彩色</button>
+          <button data-view="depth">深度</button>
+          <button data-view="height">高度圖 (相對紙面)</button>
+        </div>
+        <label class="chk"><input type="checkbox" id="chk-overlay" checked> 疊圖 (tag / 紙面格線 / 可畫範圍)</label>
+        <button class="btn" id="btn-snap">存快照 (彩色+深度)</button>
+      </div>
+      <div class="video-wrap"><img id="video" alt="RealSense"></div>
+      <div class="muted small" id="paper-line">—</div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>最近的執行紀錄</h2><span class="muted small">每次實作都完整記錄 (runs/)</span>
+        <button class="btn ghost" id="btn-refresh-runs">重新整理</button></div>
+      <div class="table-wrap">
+        <table class="runs"><thead><tr><th>時間</th><th>類型</th><th>狀態</th><th>摘要</th><th>快照</th></tr></thead>
+          <tbody id="runs-body"></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <aside class="col-side">
+    <div class="card keys-card">
+      <div class="card-head"><h2>鍵盤按鍵 (在任務視窗按)</h2>
+        <button class="btn ghost small" id="btn-keys-toggle">收起</button></div>
+      <div id="keys-body">
+        <div class="keys-sec">任何時候</div>
+        <div class="keys">
+          <span><kbd>Ctrl</kbd>+<kbd>C</kbd></span><span><b>停止</b> → 垂直抬起 → 回 home 結束 (已完成的保留)</span>
+          <span><kbd>空白</kbd> <kbd>Esc</kbd> <kbd>p</kbd></span><span>移動中<b>暫停</b>,跳出選單</span>
+          <span><kbd>o</kbd> / <kbd>g</kbd></span><span>夾爪<b>張開</b> / <b>夾緊</b> (移動中按也可以,手臂不停)</span>
+          <span class="warn-txt">實體急停</span><span class="warn-txt">最可靠的停止方式,手一直放旁邊</span>
+        </div>
+        <div class="keys-sec">找高度 (人工下降,輸入後按 Enter)</div>
+        <div class="keys">
+          <span><kbd>Enter</kbd></span><span>往下一步</span>
+          <span><kbd>2</kbd> <kbd>0.5</kbd> …</span><span>改步距並往下 (mm)</span>
+          <span><kbd>u</kbd></span><span>往上一步</span>
+          <span><kbd>x 2</kbd> <kbd>y -3</kbd></span><span>水平微調 (mm,最多 5;會先抬 2 mm)</span>
+          <span><kbd>c</kbd></span><span><b>剛好畫得出來 → 記下這個高度</b></span>
+          <span><kbd>q</kbd></span><span>結束 (抬起回 home)</span>
+        </div>
+        <div class="keys-sec">暫停選單</div>
+        <div class="keys">
+          <span><kbd>r</kbd></span><span>重做這一點</span>
+          <span><kbd>s</kbd></span><span>跳過這一點</span>
+          <span><kbd>h</kbd></span><span>回 home,用已完成的點分析</span>
+          <span><kbd>q</kbd></span><span>結束</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>手臂</h2><span class="muted small" id="robot-msg"></span></div>
+      <div class="kv" id="robot-kv"></div>
+      <div class="row">
+        <button class="btn" data-grip="open">夾爪張開</button>
+        <button class="btn" data-grip="close">夾爪夾緊</button>
+        <button class="btn" data-launch="go_home" data-mode="go">回 home</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>筆尖校正</h2></div>
+      <div class="kv" id="calib-kv"></div>
+      <div class="task-row"><div><b>護貝紙整張校正</b><div class="muted small">3×3 小十字、仿射 + 留一法</div></div>
+        <div class="row"><button class="btn" data-launch="sheet_calib" data-mode="dry">dry-run</button>
+          <button class="btn primary" data-launch="sheet_calib" data-mode="go">執行</button></div></div>
+      <div class="task-row"><div><b>快速校正</b><div class="muted small">工件上 ±step,旋轉+平移</div></div>
+        <div class="row"><button class="btn" data-launch="quick_calib" data-mode="dry">dry-run</button>
+          <button class="btn primary" data-launch="quick_calib" data-mode="go">執行</button></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>工件與任務設定</h2><span class="muted small" id="cfg-msg"></span></div>
+      <form id="cfg-form" class="form"></form>
+      <div class="row">
+        <button class="btn primary" id="btn-save-cfg">儲存設定</button>
+      </div>
+      <div class="task-row"><div><b>縫合線擷取</b><div class="muted small">唯讀,用上面的板厚</div></div>
+        <div class="row"><button class="btn" data-launch="seam_boards" data-mode="dry">執行</button></div></div>
+      <div class="task-row"><div><b>沿縫描繪</b><div class="muted small">T16,尚未實作</div></div>
+        <div class="row"><button class="btn" disabled>執行</button></div></div>
+      <div class="task-row"><div><b>其他工具</b></div>
+        <div class="row"><button class="btn" data-launch="gripper_ctl" data-mode="dry">鍵盤控制夾爪</button>
+          <button class="btn" data-launch="warp_sort" data-mode="dry">筆蓋分類 dry-run</button></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>任務</h2></div>
+      <div id="task-box" class="small">—</div>
+      <div class="row"><button class="btn danger ghost" id="btn-kill">強制結束任務程式</button></div>
+      <p class="muted small">任務會在新的主控台視窗執行,請在那個視窗操作 (Enter / c / 空白鍵暫停 / Ctrl+C 回 home / o g 夾爪)。
+        會用相機的任務執行時,網頁會先釋放相機,結束後自動接回。</p>
+    </div>
+  </aside>
+</main>
+
+<dialog id="dlg-run">
+  <div class="dlg-head"><h2 id="dlg-title">紀錄</h2><button class="btn ghost" id="dlg-close">關閉</button></div>
+  <div id="dlg-body"></div>
+</dialog>
+
+<dialog id="dlg-confirm">
+  <h2 id="cf-title">確認</h2>
+  <p id="cf-text"></p>
+  <pre id="cf-cmd" class="cmd"></pre>
+  <div class="row right"><button class="btn ghost" id="cf-no">取消</button><button class="btn danger" id="cf-yes">確定執行</button></div>
+</dialog>
+
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
