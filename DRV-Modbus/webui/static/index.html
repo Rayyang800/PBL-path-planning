@@ -53,8 +53,8 @@
         <div class="keys-sec">任何時候</div>
         <div class="keys">
           <span><kbd>Ctrl</kbd>+<kbd>C</kbd></span><span><b>停止</b> → 垂直抬起 → 回 home 結束 (已完成的保留)</span>
-          <span><kbd>空白</kbd> <kbd>Esc</kbd> <kbd>p</kbd></span><span>移動中<b>暫停</b>,跳出選單</span>
-          <span><kbd>o</kbd> / <kbd>g</kbd></span><span>夾爪<b>張開</b> / <b>夾緊</b> (移動中按也可以,手臂不停)</span>
+          <span><kbd>空白</kbd> <kbd>Esc</kbd> <kbd>p</kbd></span><span><b>只在手臂移動中有效</b>:停止並跳出選單 (第一點階段則抬起回 home 結束;輸入提示時按沒有作用)</span>
+          <span><kbd>o</kbd> / <kbd>g</kbd></span><span>夾爪<b>張開</b> / <b>夾緊</b> (移動中直接按、手臂不停;在提示或選單時輸入後按 Enter)</span>
           <span class="warn-txt">實體急停</span><span class="warn-txt">最可靠的停止方式,手一直放旁邊</span>
         </div>
         <div class="keys-sec">找高度 (人工下降,輸入後按 Enter)</div>
@@ -70,8 +70,9 @@
         <div class="keys">
           <span><kbd>r</kbd></span><span>重做這一點</span>
           <span><kbd>s</kbd></span><span>跳過這一點</span>
-          <span><kbd>h</kbd></span><span>回 home,用已完成的點分析</span>
-          <span><kbd>q</kbd></span><span>結束</span>
+          <span><kbd>h</kbd></span><span>回 home,用已完成的點分析 (停下時正在畫的那點不算)</span>
+          <span><kbd>q</kbd></span><span>結束 (抬起回 home,已完成的點保留在紀錄)</span>
+          <span><kbd>o</kbd> / <kbd>g</kbd></span><span>夾爪開 / 夾,選完仍留在選單</span>
         </div>
       </div>
     </div>
@@ -87,6 +88,17 @@
     </div>
 
     <div class="card">
+      <div class="card-head"><h2>深度量測 / 工件</h2><span class="muted small" id="work-age"></span></div>
+      <div class="kv" id="work-kv"></div>
+      <div class="muted small" style="margin-top:6px">畫面上:<span style="color:#ff8c00">橘線 = 影像找到的縫</span>、
+        <span style="color:#ff00ff">洋紅線 = 深度找到的縫</span>(勾選「疊圖」)。深度用 848×480、0.1 mm 單位、8 幀中位數。</div>
+      <div class="task-row"><div><b>近距離深度量測</b><div class="muted small">home 量 3 組 → 垂直下降 150 mm 再量 3 組 → 回 home,比較精度</div></div>
+        <div class="row"><button class="btn primary" data-launch="depth_closeup" data-mode="go">執行</button></div></div>
+      <div class="task-row"><div><b>深度設定比較</b><div class="muted small">唯讀;用設定的板厚當真值,比較 5 組深度設定</div></div>
+        <div class="row"><button class="btn" data-launch="depth_compare" data-mode="dry">執行</button></div></div>
+    </div>
+
+    <div class="card">
       <div class="card-head"><h2>筆尖校正</h2></div>
       <div class="kv" id="calib-kv"></div>
       <div class="task-row"><div><b>護貝紙整張校正</b><div class="muted small">3×3 小十字、仿射 + 留一法</div></div>
@@ -95,6 +107,9 @@
       <div class="task-row"><div><b>快速校正</b><div class="muted small">工件上 ±step,旋轉+平移</div></div>
         <div class="row"><button class="btn" data-launch="quick_calib" data-mode="dry">dry-run</button>
           <button class="btn primary" data-launch="quick_calib" data-mode="go">執行</button></div></div>
+      <div class="task-row"><div><b>畫圓驗證</b><div class="muted small">相機找十字 → 繞它畫圓 → 量圓心誤差。先 dry-run 看編號</div></div>
+        <div class="row"><button class="btn" data-launch="verify_circle" data-mode="dry">dry-run</button>
+          <button class="btn primary" data-launch="verify_circle" data-mode="go">執行</button></div></div>
     </div>
 
     <div class="card">
@@ -105,8 +120,9 @@
       </div>
       <div class="task-row"><div><b>縫合線擷取</b><div class="muted small">唯讀,用上面的板厚</div></div>
         <div class="row"><button class="btn" data-launch="seam_boards" data-mode="dry">執行</button></div></div>
-      <div class="task-row"><div><b>沿縫描繪</b><div class="muted small">T16,尚未實作</div></div>
-        <div class="row"><button class="btn" disabled>執行</button></div></div>
+      <div class="task-row"><div><b>沿縫描繪</b><div class="muted small">深度估板厚 → 自動降到板面上方 → 人工按 c → 沿縫畫線 → 量偏差</div></div>
+        <div class="row"><button class="btn" data-launch="seam_trace" data-mode="dry">dry-run</button>
+          <button class="btn primary" data-launch="seam_trace" data-mode="go">執行</button></div></div>
       <div class="task-row"><div><b>其他工具</b></div>
         <div class="row"><button class="btn" data-launch="gripper_ctl" data-mode="dry">鍵盤控制夾爪</button>
           <button class="btn" data-launch="warp_sort" data-mode="dry">筆蓋分類 dry-run</button></div></div>

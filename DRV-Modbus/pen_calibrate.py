@@ -242,6 +242,13 @@ class Paused(Exception):
     """使用者在移動中按了暫停鍵 (或 Ctrl+C);已送出停止指令。"""
 
 
+def read_key():
+    """讀一個按鍵;終端機跳脫序列 (例如 Esc[I 焦點事件) 與功能鍵回傳 None,不會被誤當成 Esc 暫停。見 keyin.py。"""
+    import keyin
+    keyin.msvcrt = msvcrt                      # 測試時 msvcrt 可被替換
+    return keyin.read_key()
+
+
 def drain_keys():
     while msvcrt and msvcrt.kbhit():
         msvcrt.getwch()
@@ -259,7 +266,9 @@ class Arm:
     def _poll(self):
         """移動中每 20 ms 呼叫一次:暫停鍵 -> True;o / g -> 立刻開 / 夾夾爪 (手臂繼續動)。"""
         while msvcrt and msvcrt.kbhit():
-            ch = msvcrt.getwch()
+            ch = read_key()
+            if ch is None:
+                continue
             if ch in PAUSE_KEYS:
                 return True
             if ch in ("o", "O", "g", "G"):
@@ -328,7 +337,11 @@ def probe(arm, x, y, z_start, step, z_floor, z_safe):
     z = z_start
     print(HELP)
     while True:
-        s = ask(f"    z = {z:.2f} mm (步距 {step:g}) > ").strip().lower()
+        raw = ask(f"    z = {z:.2f} mm (步距 {step:g}) > ")
+        s = raw.strip().lower()
+        if (raw and not s) or s in ("p", "esc"):
+            print("    (空白/Esc/p 只在手臂移動中有效。現在手臂是停著的:要結束輸入 q,要停止按 Ctrl+C)")
+            continue
         if s == "c":
             return z
         if s == "a":

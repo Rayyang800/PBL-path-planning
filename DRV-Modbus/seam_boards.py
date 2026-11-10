@@ -120,11 +120,126 @@ def seam_midline(fe, step_mm=2.0):
     return 0.5 * (on_line(a0, a1) + on_line(b0, b1))
 
 
-def analyze(frame, pf, board_h_mm=0.0, step_mm=2.0):
-    """主要入口。成功回傳 dict(ok=True, seam_paper_mm=Nx2 ...);失敗回傳 dict(ok=False, reason=...)。"""
+def touching_seam(frame, pf, board, board_h_mm=0.0, step_mm=2.0, ppm=4.0, margin_mm=4.0,
+                  min_contrast=3.0, min_score=4.0, max_tilt_deg=6.0):
+    """兩板貼合 (中間看不到白紙) 時:在那一大塊暗區裡找一條「筆直、比兩側更暗或更亮」的細線當縫。
+    做法:把板子區域校正成紙面俯視圖 (ppm 像素/mm) 並轉到板子的長方形軸向,
+    對兩個軸向、±max_tilt_deg 的小角度做投影剖面,找最明顯的凹/凸線;再分段細修成折線。
+    回傳 dict(ok, seam_paper_mm, contrast, score, ...) 或 dict(ok=False, reason)。"""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+    box = board["box"].astype(np.float64)
+    ctr = box.mean(0)
+    e = box[1] - box[0]
+    u = e / np.linalg.norm(e)                                         # 板子的一個邊方向
+    v = np.array([-u[1], u[0]])
+    bw, bh = float(np.ptp(box @ u)), float(np.ptp(box @ v))
+    W, H = int((bw + 2) * ppm), int((bh + 2) * ppm)                   # 校正圖:板子中心在中央、軸向對齊影像軸
+
+    def board_to_paper(xy):                                           # 校正圖像素 -> 紙面 mm
+        b = (np.asarray(xy, float) - [W / 2, H / 2]) / ppm
+        return ctr + b[:, :1] * u + b[:, 1:2] * v
+    # 校正圖每個像素在原始影像的位置
+    gx, gy = np.meshgrid(np.arange(W), np.arange(H))
+    paper = board_to_paper(np.stack([gx.ravel(), gy.ravel()], 1))
+    pix = pf.paper_to_pix(paper, h=board_h_mm).reshape(H, W, 2).astype(np.float32)
+    rect = cv2.remap(gray.astype(np.float32), pix[..., 0], pix[..., 1], cv2.INTER_LINEAR, borderValue=255)
+    m = int(margin_mm * ppm)
+    core = rect[m + int(ppm):H - m - int(ppm), m + int(ppm):W - m - int(ppm)]
+    if core.shape[0] < 20 or core.shape[1] < 20:
+        return {"ok": False, "reason": "板子太小"}
+    best = None
+    for axis in (0, 1):                                              # 0: 縫沿影像 y (找列剖面);1: 縫沿影像 x
+        img = core if axis == 0 else core.T
+        h, w = img.shape
+        yy = np.arange(h) - h / 2
+        for tilt in np.arange(-max_tilt_deg, max_tilt_deg + 1e-6, 0.25):
+            shift = np.tan(np.radians(tilt)) * yy                     # 斜線:每列平移
+            xs = np.arange(w)[None, :] - shift[:, None]
+            idx = np.round(xs).astype(int)
+            ok = (idx >= 0) & (idx < w)
+            prof = np.bincount(idx[ok], weights=img[ok], minlength=w) / np.maximum(np.bincount(idx[ok], minlength=w), 1)
+            lo, hi = int(0.2 * w), int(0.8 * w)
+            win = int(5 * ppm)
+            for sign in (1, -1):                                      # 1: 暗線, -1: 亮線
+                for x in range(lo, hi):
+                    side = np.r_[prof[max(0, x - 3 * win):max(0, x - win // 2)], prof[x + win // 2:x + 3 * win]]
+                    if len(side) < win:
+                        continue
+                    c = sign * (np.median(side) - prof[x])
+                    noise = np.std(np.diff(side)) / np.sqrt(2) + 1e-3
+                    score = c / noise
+                    if best is None or score > best["score"]:
+                        best = {"score": float(score), "contrast": float(c), "axis": axis, "tilt": float(tilt), "x": x,
+                                "sign": sign, "w": w, "h": h}
+    if best is None or best["contrast"] < min_contrast or best["score"] < min_score:
+        return {"ok": False, "reason": f"看不到貼合的縫 (最明顯的線對比 {best['contrast'] if best else 0:.1f} 灰階、"
+                                       f"信噪比 {best['score'] if best else 0:.1f};需要 ≥ {min_contrast:g} / ≥ {min_score:g})",
+                "touch_best": best}
+    # 分段細修:每 step_mm 一段,在粗線 ±2 mm 內找極值 (拋物線內插)
+    img = core if best["axis"] == 0 else core.T
+    h, w = img.shape
+    seg = max(2, int(step_mm * ppm))
+    pts, seg_contrast = [], []
+    win = int(5 * ppm)
+    for y0 in range(0, h - seg + 1, seg):
+        yc = y0 + seg / 2
+        x_line = best["x"] + np.tan(np.radians(best["tilt"])) * (yc - h / 2)
+        a, b = int(max(1, x_line - 2 * ppm)), int(min(w - 2, x_line + 2 * ppm))
+        if b - a < 3:
+            continue
+        row = img[y0:y0 + seg].mean(0) * best["sign"]
+        xl = int(round(x_line))
+        side = np.r_[row[max(0, xl - 3 * win):max(0, xl - win // 2)], row[xl + win // 2:xl + 3 * win]]
+        p = img[y0:y0 + seg, a:b + 1].mean(0) * best["sign"]
+        k = int(np.argmin(p))
+        seg_contrast.append(float(np.median(side) - p[k]) if len(side) else 0.0)
+        if 0 < k < len(p) - 1:
+            den = p[k - 1] - 2 * p[k] + p[k + 1]
+            k = k + (0.5 * (p[k - 1] - p[k + 1]) / den if abs(den) > 1e-6 else 0.0)
+        pts.append((a + k, yc))
+    pts = np.array(pts, float)
+    if len(pts) < 5:
+        return {"ok": False, "reason": "貼合縫太短"}
+    continuity = float(np.mean(np.array(seg_contrast) >= min_contrast * 0.5))
+    if continuity < 0.7:                                             # 只有一小段有變化 (例如板子錯開的白紙缺口、刮痕) 不算縫
+        return {"ok": False, "reason": f"候選線只有 {continuity * 100:.0f}% 的長度看得到 (需要 ≥ 70%),不像一條貫穿的縫",
+                "touch_best": best}
+    # 直線擬合 + 去除離群 (筆跡、刮痕) 後重擬
+    for _ in range(2):
+        A = np.c_[pts[:, 1], np.ones(len(pts))]
+        coef, *_ = np.linalg.lstsq(A, pts[:, 0], rcond=None)
+        res = pts[:, 0] - A @ coef
+        keep = np.abs(res) < max(1.0, 3 * np.median(np.abs(res)))
+        pts = pts[keep]
+    fit_rms_mm = float(np.sqrt(np.mean((pts[:, 0] - np.c_[pts[:, 1], np.ones(len(pts))] @ coef) ** 2)) / ppm)
+    ys = np.arange(pts[0, 1], pts[-1, 1] + 1e-6, step_mm * ppm)
+    line = np.c_[np.polyval(coef, ys), ys]
+    if best["axis"] == 1:
+        line = line[:, ::-1]
+    line += [m + int(ppm), m + int(ppm)]                               # core -> 校正圖座標
+    seam_h = board_to_paper(line)                                     # 紙面 mm (板頂高度已在 remap 時修正)
+    length = float(np.linalg.norm(seam_h[-1] - seam_h[0]))
+    return {"ok": True, "seam_paper_mm": seam_h, "contrast": best["contrast"], "score": best["score"],
+            "polarity": "dark" if best["sign"] == 1 else "bright", "fit_rms_mm": fit_rms_mm, "length_mm": length,
+            "continuity": continuity}
+
+
+def analyze(frame, pf, board_h_mm=0.0, step_mm=2.0, allow_touching=True):
+    """主要入口。成功回傳 dict(ok=True, seam_paper_mm=Nx2 ...);失敗回傳 dict(ok=False, reason=...)。
+    兩板之間看得到白紙縫 -> 用兩塊板的相對邊 (mode=gap);只找到一大塊 -> 找貼合的細線 (mode=touching)。"""
     if not pf.detect(frame):
         return {"ok": False, "reason": "紙上 4 個 tag 沒有全部偵測到:" + pf.describe()}
     boards, info = find_boards(frame, pf, board_h_mm)
+    if len(boards) == 1 and allow_touching:
+        t = touching_seam(frame, pf, boards[0], board_h_mm, step_mm)
+        if t["ok"]:
+            s = t["seam_paper_mm"]
+            return {"ok": True, "mode": "touching", "paper": pf.describe(), "seam_paper_mm": s, "gap_mm": 0.0,
+                    "length_mm": t["length_mm"], "angle_deg": float(np.degrees(np.arctan2(s[-1][1] - s[0][1], s[-1][0] - s[0][0]))),
+                    "boards": boards, "board_h_mm": board_h_mm, "otsu_thr": info["otsu_thr"],
+                    "touching": {k: t[k] for k in ("contrast", "score", "polarity", "fit_rms_mm", "continuity")}}
+        return {"ok": False, "reason": "只找到 1 塊板子,也找不到貼合的縫:" + t["reason"] + "。可以在兩板間留 2~3 mm 縫",
+                "paper": pf.describe(), "boards": boards}
     if len(boards) < 2:
         return {"ok": False, "reason": f"只找到 {len(boards)} 塊板子。兩板貼太緊(看不到白紙縫)時會被當成一塊,請留 2~3 mm 縫;"
                                          f"或板子被 tag 遮住/太小。", "paper": pf.describe(), "boards": boards}

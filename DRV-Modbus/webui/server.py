@@ -44,12 +44,13 @@ LAYOUT = os.path.join(ROOT, "print", "lab_sheet_layout.json")
 ROBOT_IP = "192.168.1.1"
 
 DEFAULT_CONFIG = {
-    "workpiece": {"type": "B", "surface_h": 0.0, "notes": ""},
+    "workpiece": {"type": "B", "surface_h": 0.0, "notes": "", "depth_bias": 1.9},
     "common": {"speed": 15, "pen_loaded": True},
     "sheet": {"cols": 3, "rows": 3, "margin": 12.0, "stroke": 4.0, "hop": 5.0, "press": 0.0, "touch_all": False,
               "no_refine": False},
     "quick": {"step": 10.0, "hop": 3.0, "press": 0.0, "start_x": None, "start_y": None},
-    "seam": {"board_h": 0.0, "step_mm": 2.0},
+    "seam": {"board_h": 5.0, "step_mm": 2.0, "approach": 3.0, "press": 0.0, "reverse": False, "source": "auto", "look_dz": 150.0},
+    "verify": {"target": "auto", "radius": 8.0, "dz": 0.0},
 }
 WORKPIECES = {"A": "A 立體 L 型 (脊線塗)", "B": "B 兩片板縫合塗", "C": "C 平面其他形狀 (邊緣塗)"}
 
@@ -174,6 +175,9 @@ class Renderer:
         self._aruco = None
         self.height = None          # (version, height_map, stats)
         self._height_req = 0.0
+        self._work_t = 0.0
+        self.auto_analyze = True    # 相機串流中每 ~4 秒分析一次工件 (板厚、影像縫、深度縫)
+        self.work = {"ok": False, "msg": "等待相機"}
         self.lock = threading.Lock()
         threading.Thread(target=self._height_loop, daemon=True).start()
 
@@ -230,26 +234,73 @@ class Renderer:
         return img
 
     def _height_loop(self):
+        """每 ~4 秒分析一次工件 (相機串流中才做):高度圖、板厚 (深度)、影像縫、深度縫。結果給狀態與疊圖用。"""
         import depth_height
+        import seam_boards
+        from paper_frame import PaperFrame
+        self.work = {"ok": False, "msg": "等待相機"}
         while True:
-            time.sleep(0.3)
-            if time.time() - self._height_req > 5.0:
+            time.sleep(0.5)
+            if self.camw.cam is None or not self.camw.want or not self.auto_analyze:
                 continue
-            with self.camw.lock:
-                snap, ver = self.camw.latest, self.camw.version
+            if time.time() - self._work_t < 4.0 and time.time() - self._height_req > 0.5:
+                continue
+            self._work_t = time.time()
+            snap = self.camw.capture(n_depth=8, timeout=5.0)    # 8 幀深度中位數 (單幀雜訊太大)
             info = self.camw.info
             if snap is None or snap.get("depth") is None or info is None:
                 continue
-            if self.height is not None and ver - self.height[0] < 10:
-                continue
+            cfg = load_config()
+            board_h = float(cfg["seam"].get("board_h") or 0) or 5.0
+            bias = float(cfg["workpiece"].get("depth_bias", 0.0) or 0.0)
+            w = {"ok": False, "t": time.time()}
             try:
                 mm = snap["depth"].astype(np.float32) * float(info["depth_scale_m"]) * 1000.0
                 mm[snap["depth"] == 0] = np.nan
                 H, pf, st = depth_height.height_map(snap["color"], mm, info["color_intrinsics"], LAYOUT)
-                self.height = (ver, H, st)
+                self.height = (self.camw.version, H, st)
+                w.update(paper_rms_mm=st["paper_rms_mm"])
+                boards, _ = seam_boards.find_boards(snap["color"], pf, board_h)
+                if not boards:
+                    w["msg"] = "紙上沒有找到工件 (暗色板子)"
+                else:
+                    b = boards[0]
+                    w.update(ok=True, msg="", board_size_mm=b["size_mm"], n_boards=len(boards))
+                    est = depth_height.board_thickness(H, b["contour"])
+                    if est:
+                        w.update(t_raw_mm=est["t_mm"], t_spread_mm=est["spread_mm"], depth_bias_mm=bias,
+                                 t_corrected_mm=est["t_mm"] + bias, board_h_setting=board_h)
+                    col = seam_boards.analyze(snap["color"], PaperFrame(layout=LAYOUT), board_h_mm=board_h)
+                    dsm = depth_height.depth_seam(H, pf, b["box"], board_h)
+                    w["color_seam"] = {"ok": bool(col["ok"]), "mode": col.get("mode"), "reason": col.get("reason"),
+                                       "length_mm": col.get("length_mm")}
+                    w["depth_seam"] = {"ok": bool(dsm["ok"]), "reason": dsm.get("reason"), "dip_mm": dsm.get("dip_mm"),
+                                       "length_mm": dsm.get("length_mm")}
+                    lines = {"board_h": board_h}
+                    if col["ok"]:
+                        lines["color"] = np.asarray(col["seam_paper_mm"]).tolist()
+                    if dsm["ok"]:
+                        lines["depth"] = np.asarray(dsm["seam_paper_mm"]).tolist()
+                    if col["ok"] and dsm["ok"]:
+                        off, ang = depth_height.line_offset(col["seam_paper_mm"], dsm["seam_paper_mm"])
+                        w["seam_diff"] = {"offset_mm": off, "angle_deg": ang, "agree": abs(off) <= 1.5 and ang <= 3.0}
+                    self.seam_lines = lines
+                    self._seam_pf = pf
             except Exception as e:          # noqa: BLE001
-                self.height = (ver, None, {"error": str(e)})
-            time.sleep(1.0)
+                w = {"ok": False, "msg": f"分析錯誤: {str(e)[:80]}", "t": time.time()}
+            self.work = w
+
+    def _draw_seams(self, img):
+        """在影像上畫影像縫 (橘) 與深度縫 (洋紅)。"""
+        lines, pf = getattr(self, "seam_lines", None), getattr(self, "_seam_pf", None)
+        if not lines or pf is None:
+            return img
+        bh = lines.get("board_h", 0)
+        for key, col in (("depth", (255, 0, 255)), ("color", (0, 140, 255))):
+            if key in lines:
+                p = np.int32(np.round(pf.paper_to_pix(np.asarray(lines[key]), bh)))
+                cv2.polylines(img, [p], False, col, 2, cv2.LINE_AA)
+        return img
 
     def jpeg(self, view="color", overlay=True, width=960):
         with self.camw.lock:
@@ -268,8 +319,8 @@ class Renderer:
             vis = cv2.applyColorMap(np.clip((d - lo) / max(1, hi - lo) * 255, 0, 255).astype(np.uint8), cv2.COLORMAP_TURBO)
             vis[~valid] = (40, 40, 40)
             img = vis
-            cv2.putText(img, f"depth {lo * 0.001:.3f}~{hi * 0.001:.3f} (raw*scale m)", (8, 22),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            sc = float((self.camw.info or {}).get("depth_scale_m") or 0.001) * 1000.0
+            cv2.putText(img, f"depth {lo * sc:.0f}~{hi * sc:.0f} mm", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         elif view == "height":
             self._height_req = time.time()
             h = self.height
@@ -281,9 +332,11 @@ class Renderer:
                 m = ~np.isnan(Hm)
                 img[m] = (0.35 * img[m] + 0.65 * vis[m]).astype(np.uint8)
                 st = h[2]
-                txt = f"height -5~+20mm  paper RMS {st['paper_rms_mm']:.2f}mm  valid {st['valid_frac_on_paper'] * 100:.0f}%"
+                txt = f"height -5~+20mm  paper RMS {st['paper_rms_mm']:.2f}mm  orange=image seam  magenta=depth seam"
             else:
-                txt = "height: " + (h[2].get("error", "計算中") if h else "計算中 (需要看到 4 個 tag 與深度)")
+                txt = "height: " + (h[2].get("error", "computing") if h else "computing (need 4 tags + depth)")
+            if overlay:
+                img = self._draw_seams(img)
             cv2.rectangle(img, (0, 0), (img.shape[1], 30), (0, 0, 0), -1)
             cv2.putText(img, txt[:110], (8, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
         else:
@@ -291,6 +344,7 @@ class Renderer:
             if overlay:
                 self._detect(snap, ver)
                 img = self._overlay(img)
+                img = self._draw_seams(img)
         if width and img.shape[1] > width:
             img = cv2.resize(img, (width, int(img.shape[0] * width / img.shape[1])), interpolation=cv2.INTER_AREA)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -407,7 +461,16 @@ def task_registry(cfg):
             a += ["--start-paper", str(qk["start_x"]), str(qk["start_y"])]
         return a + (["--go"] if mode == "go" else [])
 
+    vf = cfg.get("verify", DEFAULT_CONFIG["verify"])
+
+    def verify(mode):
+        a = ["--target", str(vf.get("target") or "auto"), "--radius", str(vf.get("radius", 8.0)),
+             "--dz", str(vf.get("dz", 0.0))] + spd
+        return a + (["--go"] if mode == "go" else [])
+
     return {
+        "verify_circle": {"label": "畫圓驗證 (視覺 -> 筆尖)", "script": "pen_verify_circle.py", "uses_camera": True,
+                          "moves": True, "build": verify},
         "sheet_calib": {"label": "護貝紙整張校正", "script": "pen_sheet_calib.py", "uses_camera": True, "moves": True,
                         "build": sheet},
         "quick_calib": {"label": "快速校正 (工件上 ±step)", "script": "pen_quick_calib.py", "uses_camera": True,
@@ -416,6 +479,18 @@ def task_registry(cfg):
                     "build": lambda m: ["--speed", str(min(40, int(cm.get("speed", 15)) * 2))]},
         "gripper_ctl": {"label": "鍵盤控制夾爪", "script": "gripper_ctl.py", "uses_camera": False, "moves": False,
                         "build": lambda m: []},
+        "seam_trace": {"label": "沿縫描繪", "script": "seam_trace.py", "uses_camera": True, "moves": True,
+                       "build": lambda m: ((["--board-h", str(sm["board_h"])] if float(sm.get("board_h") or 0) > 0 else [])
+                                           + ["--approach", str(sm.get("approach", 3.0)), "--press", str(sm.get("press", 0.0)),
+                                              "--step-mm", str(sm.get("step_mm", 2.0)), "--speed", str(min(15, int(cm.get("speed", 10))))]
+                                           + ["--seam-source", str(sm.get("source") or "auto")]
+                                           + ["--look-dz", str(float(sm.get("look_dz") if sm.get("look_dz") is not None else 150.0))]
+                                           + (["--reverse"] if sm.get("reverse") else []) + (["--go"] if m == "go" else []))},
+        "depth_closeup": {"label": "近距離深度量測 (手臂下降 150 mm)", "script": "depth_closeup.py", "uses_camera": True,
+                          "moves": True, "always_moves": True,
+                          "build": lambda m: ["--dz", "150", "--board-h", str(float(sm.get("board_h") or 5.0))]},
+        "depth_compare": {"label": "深度設定比較 (唯讀)", "script": "depth_compare.py", "uses_camera": True, "moves": False,
+                          "build": lambda m: ["--truth", str(float(sm.get("board_h") or 5.0))]},
         "seam_boards": {"label": "縫合線擷取 (唯讀)", "script": "seam_boards.py", "uses_camera": True, "moves": False,
                         "build": lambda m: ["--camera", "--board-h", str(sm.get("board_h", 0)), "--step-mm", str(sm.get("step_mm", 2)),
                                             "--label", f"wp{wp_.get('type', '')}"]},
@@ -464,7 +539,8 @@ class TaskManager:
             self.robw.paused = True
             self.robw.disconnect()
             argv = [sys.executable, os.path.join(ROOT, t["script"])] + t["build"](mode)
-            title = f"{t['label']} ({mode})"
+            # cmd 的特殊字元 (> < | & ^) 不能出現在 title 指令裡:"->" 曾被當成輸出導向,產生名為「筆尖)」的空檔
+            title = "".join(ch for ch in f"{t['label']} ({mode})" if ch not in '<>|&^"%')
             # cmd /c "... & pause":結束後視窗留著讓人看結果,按任意鍵關閉
             line = subprocess.list2cmdline(argv)
             cmd = f'title {title} & {line} & echo. & echo ===== 程式已結束,按任意鍵關閉視窗 ===== & pause >nul'
@@ -535,7 +611,7 @@ def run_detail(run_id):
         with open(cp, encoding="utf-8", errors="replace") as f:
             console = "".join(f.readlines()[-120:])
     results = {}
-    for name in ("marks_result.json", "result.json", "plan.json"):
+    for name in ("marks_result.json", "verify_result.json", "trace_result.json", "result.json", "plan.json"):
         fp = os.path.join(path, "data", name)
         if os.path.isfile(fp) and os.path.getsize(fp) < 400_000:
             with open(fp, encoding="utf-8") as f:
@@ -704,6 +780,7 @@ def status_payload():
             "camera": {"state": cam.state, "fps": round(cam.fps, 1), "info": {k: cam.info.get(k) for k in ("name", "serial", "usb", "firmware")}
                        if cam.info else None, "has_depth": bool(cam.latest and cam.latest.get("depth") is not None)},
             "paper": {k: v for k, v in App.rend.paper.items() if k not in ("aruco_corners",)},
+            "work": App.rend.work,
             "robot": App.robw.state, "task": App.tasks.status(), "calib": calib_summary(),
             "server_run": os.path.basename(App.slog.path)}
 

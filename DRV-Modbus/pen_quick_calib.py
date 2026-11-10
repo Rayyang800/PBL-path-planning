@@ -47,11 +47,28 @@ class Quit(Exception):
     pass
 
 
+def point_menu(arm, h_text="回 home 用已完成的點分析"):
+    """暫停選單 (手臂已停):r 重做 / s 跳過 / h 回 home 分析 / q 結束;o / g 夾爪 (留在選單)。"""
+    while True:
+        ch = ask(f"暫停:r = 重做這一點 / s = 跳過 / h = {h_text} / q = 結束 / o g = 夾爪 > ").strip().lower()
+        if ch in ("o", "g"):
+            arm.grip(close=ch == "g", delay=0.5)
+            print(f"  [夾爪] {'夾緊' if ch == 'g' else '張開'}")
+            continue
+        if ch in ("r", "s", "h", "q"):
+            return ch
+
+
 def probe_with_nudge(arm, x, y, z, step, z_floor, z_safe):
     """人工下降 + 水平微調。回傳 (x, y, z_touch)。"""
     print(PROBE_HELP)
     while True:
-        s = ask(f"    位置 ({x:.1f}, {y:.1f})  z = {z:.2f} (步距 {step:g}) > ").strip().lower()
+        raw = ask(f"    位置 ({x:.1f}, {y:.1f})  z = {z:.2f} (步距 {step:g}) > ")
+        s = raw.strip().lower()
+        if (raw and not s) or s in ("p", "esc"):
+            # 空白鍵/p 在輸入提示時沒有暫停功能;不能把「空白 + Enter」當成 Enter 往下
+            print("    (空白/Esc/p 只在手臂移動中有效。現在手臂是停著的:要結束輸入 q,要停止按 Ctrl+C)")
+            continue
         if s == "c":
             return x, y, z
         if s == "q":
@@ -343,9 +360,7 @@ def main():
                         if isinstance(e, KeyboardInterrupt):
                             arm.stop_and_check("ctrl_c")
                         raise Quit("Ctrl+C")
-                    ch = ""
-                    while ch not in ("r", "s", "h", "q"):
-                        ch = ask("暫停:r = 重做這一點 / s = 跳過 / h = 回 home 分析已完成的點 / q = 結束 > ").strip().lower()
+                    ch = point_menu(arm)
                     if ch == "r":
                         continue
                     if ch == "s":

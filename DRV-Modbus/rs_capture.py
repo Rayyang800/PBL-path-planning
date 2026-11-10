@@ -26,7 +26,10 @@ def _intr(i):
 
 
 class RSCamera:
-    def __init__(self, depth=True, width=1280, height=720, fps=30, warmup=30):
+    # 深度用 848x480:D435 官方建議的最佳深度解析度;11-10 實測 (depth_compare.py) 重複性比 1280x720 好 3 倍。
+    # 不加 spatial/temporal 濾波、不用 High Accuracy:會把 5 mm 的高低差抹平 (量到 2.0 / 0.6 mm)。
+    def __init__(self, depth=True, width=1280, height=720, fps=30, warmup=30, depth_res=(848, 480)):
+        self.depth_res = tuple(depth_res)
         if rs is None:
             raise RuntimeError("沒有安裝 pyrealsense2")
         self.pipe = rs.pipeline()
@@ -42,6 +45,14 @@ class RSCamera:
                 self.depth = False
         if self.profile is None:
             self.profile = self._start(False, width, height, fps)
+        if self.depth:
+            # 深度單位 1 mm -> 0.1 mm:z16 的量化從 1 mm 變 0.1 mm (最遠 6.5 m,足夠)。11-10 剖面可見 ~1 mm 階梯。
+            try:
+                ds = self.profile.get_device().first_depth_sensor()
+                if ds.supports(rs.option.depth_units):
+                    ds.set_option(rs.option.depth_units, 0.0001)
+            except Exception as e:                   # noqa: BLE001
+                print("[rs_capture] 無法設定深度單位:", e)
         self.align = rs.align(rs.stream.color) if self.depth else None
         for _ in range(warmup):                       # 等自動曝光穩定
             self.pipe.wait_for_frames(5000)
@@ -50,7 +61,7 @@ class RSCamera:
         cfg = rs.config()
         cfg.enable_stream(rs.stream.color, w, h, rs.format.bgr8, fps)
         if depth:
-            cfg.enable_stream(rs.stream.depth, w, h, rs.format.z16, fps)
+            cfg.enable_stream(rs.stream.depth, self.depth_res[0], self.depth_res[1], rs.format.z16, fps)
         return self.pipe.start(cfg)
 
     def info(self):
@@ -89,7 +100,9 @@ class RSCamera:
         if deps:
             D = np.stack(deps).astype(np.float32)
             D[D == 0] = np.nan
-            with np.errstate(all="ignore"):
+            import warnings
+            with np.errstate(all="ignore"), warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)     # 整欄都沒深度的像素:正常,不用警告
                 med = np.nanmedian(D, axis=0) if len(deps) > 1 else D[0]
                 valid = np.mean(~np.isnan(D), axis=0)
             snap["depth"] = np.nan_to_num(med, nan=0).round().astype(np.uint16)

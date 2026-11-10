@@ -86,6 +86,25 @@ function renderStatus(s) {
   $$("[data-grip]").forEach(b => b.disabled = !!t.running || !r.ok);
   $("#btn-kill").disabled = !t.running;
   renderCalib(s.calib || {});
+  renderWork(s.work || {});
+}
+function renderWork(w) {
+  $("#work-age").textContent = w.t ? `${Math.max(0, Math.round(Date.now() / 1000 - w.t))} 秒前更新` : "";
+  if (!w.ok) { kv($("#work-kv"), [["狀態", esc(w.msg || "—")]]); return; }
+  const rows = [];
+  if (w.t_raw_mm != null) {
+    const set = w.board_h_setting, corr = w.t_corrected_mm, diff = corr - set;
+    rows.push(["板厚 (深度)", `原始 ${fmt(w.t_raw_mm, 2)} + 材質修正 ${fmt(w.depth_bias_mm, 1)} = <b>${fmt(corr, 2)} mm</b>`],
+      ["設定板厚", `${fmt(set, 1)} mm ${Math.abs(diff) <= 1 ? "✓ 一致" : `<span class="warn-txt">差 ${diff > 0 ? "+" : ""}${diff.toFixed(1)} mm</span>`}`]);
+  }
+  rows.push(["工件大小", w.board_size_mm ? w.board_size_mm.map(v => v.toFixed(0)).join(" × ") + " mm" : "—"]);
+  const cs = w.color_seam || {}, ds = w.depth_seam || {};
+  rows.push(["影像縫", cs.ok ? `✓ ${cs.mode === "touching" ? "貼合" : "白紙縫"},長 ${fmt(cs.length_mm, 0)} mm` : `✗ ${esc(cs.reason || "")}`],
+    ["深度縫", ds.ok ? `✓ 凹陷 ${fmt(ds.dip_mm, 2)} mm,長 ${fmt(ds.length_mm, 0)} mm` : `✗ ${esc(ds.reason || "")}`]);
+  if (w.seam_diff) rows.push(["兩者差", `側向 ${w.seam_diff.offset_mm >= 0 ? "+" : ""}${w.seam_diff.offset_mm.toFixed(2)} mm、夾角 ${w.seam_diff.angle_deg.toFixed(1)}° `
+    + (w.seam_diff.agree ? "✓ 一致" : `<span class="warn-txt">不一致,看畫面確認</span>`)]);
+  rows.push(["紙面深度雜訊", `${fmt(w.paper_rms_mm, 2)} mm`]);
+  kv($("#work-kv"), rows);
 }
 function renderCalib(cal) {
   const p = cal.pen_paper, w = cal.warp_plane, rows = [];
@@ -109,6 +128,12 @@ const PROBE_KEYS = [["Enter", "往下"], ["2 0.5", "改步距"], ["u", "往上"]
 const TASK_KEYS = {
   sheet_calib: { hint: "第一點:人工下降到剛好畫得出來按 c,之後自動", keys: [...PROBE_KEYS, ...COMMON_KEYS] },
   quick_calib: { hint: "第一點:人工下降到剛好點出顏色按 c,之後自動", keys: [...PROBE_KEYS, ...COMMON_KEYS] },
+  depth_closeup: { hint: "先在 home 量 3 組;提示時按 Enter 手臂才會垂直下降 150 mm,量完自動回 home", keys: [["Enter", "開始下降"], ["Ctrl+C", "停止"]] },
+  depth_compare: { hint: "唯讀,不動手臂;約 1 分鐘,結束後在紀錄看總結表", keys: [] },
+  verify_circle: { hint: "dry-run:看預覽圖編號,填到設定的「目標十字編號」;執行:按 Enter 開始,畫完自動回 home 量誤差",
+    keys: [["Enter", "開始"], ...COMMON_KEYS] },
+  seam_trace: { hint: "Enter 開始 → 先垂直下降近距離量測 (板厚、縫) → 移到起點、降到板面上方,每步 0.5 mm 往下,剛好畫得出來按 c → 自動沿縫畫完",
+    keys: [["Enter", "往下 0.5"], ["u", "往上"], ["x 2", "微調 (套用整條)"], ["c", "記下高度開始畫"], ...COMMON_KEYS] },
   go_home: { hint: "確認路徑安全後在視窗按 Enter 開始移動", keys: [["Enter", "開始"], ["q", "取消"], ["Ctrl+C", "停止"]] },
   gripper_ctl: { hint: "按鍵直接生效,不用 Enter", keys: [["o", "張開"], ["g", "夾緊"], ["s", "讀狀態"], ["q", "離開"]] },
   seam_boards: { hint: "唯讀,不動手臂;結束後按任意鍵關閉視窗", keys: [] },
@@ -153,10 +178,11 @@ async function openRun(id) {
     const m = d.meta;
     $("#dlg-title").textContent = id;
     const imgs = d.images.filter(n => /\.(png|jpe?g)$/i.test(n));
-    const res = d.results["marks_result.json"] || d.results["result.json"];
+    const res = d.results["verify_result.json"] || d.results["marks_result.json"] || d.results["result.json"];
     let resTxt = "";
     if (res) {
-      const keys = ["ok", "fit", "rms_mm", "max_mm", "loo_mean_mm", "loo_max_mm", "n_points", "rotation_deg", "rotation_vs_rough_deg",
+      const keys = ["ok", "mean_dev_mm", "p90_dev_mm", "offset_mm", "center_error_mm", "center_error_xy_mm", "circle_radius_mm", "radius_error_mm", "coverage",
+        "fit", "rms_mm", "max_mm", "loo_mean_mm", "loo_max_mm", "n_points", "rotation_deg", "rotation_vs_rough_deg",
         "est_err_at_100mm", "gap_mm", "length_mm", "reason"];
       resTxt = keys.filter(k => res[k] !== undefined).map(k => `${k}: ${typeof res[k] === "number" ? res[k].toFixed(3) : res[k]}`).join("\n");
     }
@@ -187,7 +213,12 @@ const FIELDS = [
   ["sec", "工件"],
   ["workpiece.type", "工件類型", "select"],
   ["workpiece.surface_h", "工件表面比校正紙高 (mm)", "number"],
-  ["seam.board_h", "板厚 (縫合線擷取視差修正, mm)", "number"],
+  ["workpiece.depth_bias", "home 高度的深度修正 (mm;近距離量測不需要)", "number"],
+  ["seam.look_dz", "描繪前先下降近距離量測 (mm,0 = 不下降)", "number"],
+  ["seam.source", "縫的來源", "choice", null, {auto: "auto:影像為主、深度確認", color: "只用影像", depth: "只用深度"}],
+  ["seam.board_h", "板厚 mm (0 = 用深度自動估計)", "number"],
+  ["seam.approach", "自動降到板面上方 (mm)", "number"], ["seam.press", "沿縫多壓 (mm)", "number"],
+  ["seam.reverse", "從縫的另一端開始", "checkbox"],
   ["workpiece.notes", "備註", "text", "full"],
   ["sec", "共通"],
   ["common.speed", "手臂速度 (1~30)", "number"],
@@ -197,6 +228,9 @@ const FIELDS = [
   ["sheet.margin", "離 tag 內緣 (mm)", "number"], ["sheet.stroke", "十字半長 (mm)", "number"],
   ["sheet.hop", "點間抬高 (mm)", "number"], ["sheet.press", "多壓 (mm)", "number"],
   ["sheet.touch_all", "每點人工確認高度", "checkbox"], ["sheet.no_refine", "不回 home 修正", "checkbox"],
+  ["sec", "畫圓驗證"],
+  ["verify.target", "目標十字編號 (auto = 最靠近紙中心)", "text"], ["verify.radius", "圓半徑 (mm)", "number"],
+  ["verify.dz", "比 z_touch 多壓 (mm,圓斷斷續續時給 0.5)", "number"],
   ["sec", "快速校正"],
   ["quick.step", "偏移 step (mm)", "number"], ["quick.hop", "點間抬高 (mm)", "number"],
   ["quick.start_x", "第一點紙面 X (空 = 紙中心)", "number"], ["quick.start_y", "第一點紙面 Y", "number"],
@@ -208,6 +242,8 @@ function buildForm() {
     const [path, label, type, full] = f, v = getPath(CFG, path);
     if (type === "select") return `<label>${esc(label)}<select name="${path}">${Object.entries(WORKPIECES).map(([k, t]) =>
       `<option value="${k}" ${k === v ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>`;
+    if (type === "choice") return `<label>${esc(label)}<select name="${path}">${Object.entries(f[4]).map(([k, t]) =>
+      `<option value="${k}" ${k === (v || "auto") ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>`;
     if (type === "checkbox") return `<label class="inline"><input type="checkbox" name="${path}" ${v ? "checked" : ""}> ${esc(label)}</label>`;
     return `<label class="${full ? "full" : ""}">${esc(label)}<input name="${path}" type="${type}" step="any" value="${v ?? ""}"></label>`;
   }).join("");

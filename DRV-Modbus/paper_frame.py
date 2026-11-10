@@ -43,18 +43,36 @@ class PaperFrame:
     def detect(self, frame):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
         corners, ids, _ = cv2.aruco.detectMarkers(gray, self.dict, parameters=self.params)
-        self.found = {int(i[0]): c[0] for c, i in zip(corners, ids)} if ids is not None else {}
+        cands = {}
+        for c, i in zip(corners, ids if ids is not None else []):
+            cands.setdefault(int(i[0]), []).append(c[0])
         need = [t["id"] for t in self.layout["tags"]]
-        self.missing = [i for i in need if i not in self.found]
+        self.duplicates = {i: len(v) for i, v in cands.items() if len(v) > 1}
+        self.found = {i: v[0] for i, v in cands.items()}
+        self.missing = [i for i in need if i not in cands]
         self.ok = False
         if self.missing:
             return False
-        img_pts = np.float32([p for t in self.layout["tags"] for p in self.found[t["id"]].tolist()])
         obj_pts = np.float32([p for t in self.layout["tags"] for p in t["corners_mm"]])
-        self.H0, _ = cv2.findHomography(img_pts, obj_pts, 0)
+        # 畫面裡可能有別張紙印著同 ID 的 tag:每種組合都擬合一次,取殘差最小的 (組合數很小)
+        import itertools
+        best = None
+        for combo in itertools.product(*[cands[i] for i in need]):
+            img_pts = np.float32([p for c in combo for p in c.tolist()])
+            H, _ = cv2.findHomography(img_pts, obj_pts, 0)
+            if H is None:
+                continue
+            proj = cv2.perspectiveTransform(img_pts.reshape(-1, 1, 2), H).reshape(-1, 2)
+            rms = float(np.sqrt(np.mean(np.sum((proj - obj_pts) ** 2, axis=1))))
+            if best is None or rms < best[0]:
+                best = (rms, H, img_pts, combo)
+        if best is None:
+            return False
+        self.rms_mm, self.H0, img_pts, combo = best
+        self.found = dict(zip(need, combo))
         self.H0inv = np.linalg.inv(self.H0)
-        proj = cv2.perspectiveTransform(img_pts.reshape(-1, 1, 2), self.H0).reshape(-1, 2)
-        self.rms_mm = float(np.sqrt(np.mean(np.sum((proj - obj_pts) ** 2, axis=1))))
+        if self.rms_mm > 3.0:                            # 角點對不上 (版面錯或 tag 誤認),不要用
+            return False
 
         obj3 = np.hstack([obj_pts, np.zeros((len(obj_pts), 1), np.float32)])
         ok, rvec, tvec = cv2.solvePnP(obj3, img_pts, self.K, self.dist, flags=cv2.SOLVEPNP_ITERATIVE)

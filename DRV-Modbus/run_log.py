@@ -55,7 +55,7 @@ def current():
 def _git_info():
     import subprocess
     try:
-        kw = dict(cwd=HERE, capture_output=True, text=True, timeout=5)
+        kw = dict(cwd=HERE, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
         commit = subprocess.run(["git", "rev-parse", "HEAD"], **kw).stdout.strip()
         dirty = subprocess.run(["git", "status", "--porcelain", "--", "."], **kw).stdout.strip()
         return {"commit": commit or None, "dirty_files": dirty.splitlines()[:50] if dirty else []}

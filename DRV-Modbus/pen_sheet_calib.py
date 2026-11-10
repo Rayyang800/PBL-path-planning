@@ -37,7 +37,7 @@ import warp_pick as wp
 from drv_modbus import send, request
 from paper_frame import PaperFrame
 from pen_calibrate import Arm, Paused, ask, grab, LAST_GRAB, LAYOUT, MAX_SPEED, safe_region, small_cross
-from pen_quick_calib import Quit, probe_with_nudge, rough_rotation, angle_of
+from pen_quick_calib import Quit, probe_with_nudge, rough_rotation, angle_of, point_menu
 from run_log import RunLog, CalibrationStore, load_run
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -368,9 +368,7 @@ def main():
                         if isinstance(e, KeyboardInterrupt):
                             arm.stop_and_check("ctrl_c")
                         raise Quit("Ctrl+C")
-                    ch = ""
-                    while ch not in ("r", "s", "h", "q"):
-                        ch = ask("暫停:r = 重做這一點 / s = 跳過 / h = 回 home 用已完成點分析 / q = 結束 > ").strip().lower()
+                    ch = point_menu(arm)
                     if ch == "r":
                         arm.lift_to(z_touch + args.hop)
                         continue
