@@ -129,6 +129,10 @@ const TASK_KEYS = {
   sheet_calib: { hint: "第一點:人工下降到剛好畫得出來按 c,之後自動", keys: [...PROBE_KEYS, ...COMMON_KEYS] },
   quick_calib: { hint: "第一點:人工下降到剛好點出顏色按 c,之後自動", keys: [...PROBE_KEYS, ...COMMON_KEYS] },
   depth_closeup: { hint: "先在 home 量 3 組;提示時按 Enter 手臂才會垂直下降 150 mm,量完自動回 home", keys: [["Enter", "開始下降"], ["Ctrl+C", "停止"]] },
+  ridge_trace: { hint: "Enter → 快速掃描 (正上方,不傾斜) → 找脊線 → Enter 移到起點上方 → 每步 0.5 mm 往下,筆尖剛好碰到脊線按 c → 自動沿脊線畫",
+    keys: [["Enter", "往下 0.5"], ["u", "往上"], ["x 2", "微調 (套用整條)"], ["c", "記下高度開始畫"], ...COMMON_KEYS] },
+  scan3d: { hint: "執行:Enter → 正上方一圈 → 原地試轉 3 次量手眼 → 再按 Enter → 傾斜往物體看一圈 (會降低、傾斜) → 回 home 合併。不下筆",
+    keys: [["Enter", "開始"], ["Ctrl+C", "停止→回 home (已拍的照樣合併)"], ["空白", "選單 r/s/h/q"]] },
   depth_compare: { hint: "唯讀,不動手臂;約 1 分鐘,結束後在紀錄看總結表", keys: [] },
   verify_circle: { hint: "dry-run:看預覽圖編號,填到設定的「目標十字編號」;執行:按 Enter 開始,畫完自動回 home 量誤差",
     keys: [["Enter", "開始"], ...COMMON_KEYS] },
@@ -196,12 +200,15 @@ async function openRun(id) {
         <div class="k">事件數</div><div class="v">${d.n_events}(含手臂指令與軌跡)</div>
         <div class="k">結果</div><div class="v">${esc(JSON.stringify(m.result || {}))}</div>
       </div>
+      ${d.data.includes("model.ply") ? `<div class="row" style="margin-top:10px"><button class="btn primary" id="dlg-m3">在立體視窗開啟模型</button></div>` : ""}
       ${resTxt ? `<h2 style="margin-top:10px">分析結果</h2><pre class="cmd">${esc(resTxt)}</pre>` : ""}
       <h2 style="margin-top:10px">影像 (${imgs.length})</h2>
       <div class="thumbs">${imgs.map(n => `<figure><a href="/files/runs/${encodeURIComponent(id)}/images/${encodeURIComponent(n)}" target="_blank">
         <img loading="lazy" src="/files/runs/${encodeURIComponent(id)}/images/${encodeURIComponent(n)}"></a><figcaption>${esc(n)}</figcaption></figure>`).join("")}</div>
       ${d.data.length ? `<div class="small muted">data/:${d.data.map(n => `<a target="_blank" href="/files/runs/${encodeURIComponent(id)}/data/${encodeURIComponent(n)}">${esc(n)}</a>`).join("、")}</div>` : ""}
       ${d.console ? `<h2 style="margin-top:10px">終端輸出 (最後 120 行)</h2><pre class="console">${esc(d.console)}</pre>` : ""}`;
+    const b3 = $("#dlg-m3");
+    if (b3) b3.onclick = () => { $("#dlg-run").close(); openModel(id); $("#m3-canvas").scrollIntoView({ behavior: "smooth", block: "center" }); };
     $("#dlg-run").showModal();
   } catch (e) { toast("讀取失敗:" + e.message); }
 }
@@ -231,6 +238,17 @@ const FIELDS = [
   ["sec", "畫圓驗證"],
   ["verify.target", "目標十字編號 (auto = 最靠近紙中心)", "text"], ["verify.radius", "圓半徑 (mm)", "number"],
   ["verify.dz", "比 z_touch 多壓 (mm,圓斷斷續續時給 0.5)", "number"],
+  ["sec", "沿脊線描繪 (工件 A)"],
+  ["ridge.views", "快速掃描視角數 (1 / 3 / 5)", "choice", null, {1: "1:只拍正上方", 3: "3:正上方 + 左右", 5: "5:正上方 + 前後左右"}],
+  ["ridge.approach", "自動降到脊線上方 (mm)", "number"], ["ridge.press", "沿脊線多壓 (mm)", "number"],
+  ["ridge.step_mm", "路徑點間距 (mm)", "number"], ["ridge.end_margin", "兩端各留不畫 (mm)", "number"],
+  ["ridge.reverse", "從另一端開始", "checkbox"],
+  ["sec", "多視角立體重建"],
+  ["scan.cam_h", "掃描時相機離紙 (mm,home 約 520)", "number"], ["scan.radius", "周圍視角半徑 (mm)", "number"],
+  ["scan.n_ring", "周圍視角數 (0 = 只拍正上方)", "number"], ["scan.clearance", "筆尖比物體高至少 (mm,≥ 20)", "number"],
+  ["scan.obj_h", "物體高度上限 (mm,0 = 深度估計)", "number"],
+  ["scan.tilts", "傾斜視角角度 (度,逗號分隔;空白 = 不做)", "text"], ["scan.n_tilt", "每個傾斜角度幾個視角 (0 = 不做)", "number"],
+  ["scan.view_dist", "傾斜時相機離物體中心 (mm)", "number"],
   ["sec", "快速校正"],
   ["quick.step", "偏移 step (mm)", "number"], ["quick.hop", "點間抬高 (mm)", "number"],
   ["quick.start_x", "第一點紙面 X (空 = 紙中心)", "number"], ["quick.start_y", "第一點紙面 Y", "number"],
@@ -313,6 +331,60 @@ $("#btn-kill").onclick = async () => {
 $("#btn-snap").onclick = async () => {
   try { const j = await api("/api/snapshot", { label: "" }); toast("已存快照:" + j.run); loadRuns(); } catch (e) { toast("快照失敗:" + e.message); }
 };
+
+// ---------------- 立體模型 ----------------
+let M3_OK = false, M3_LIST = [], M3_CUR = null;
+function m3Info(inf) {
+  const m = inf && inf.m, r = (inf && inf.result) || {};
+  const rows = [["點數", `${inf ? inf.n.toLocaleString() : "—"} (1 mm 體素)`]];
+  if (m) {
+    rows.push(["最高點", `${fmt(m.h_max_mm, 2)} mm`], ["頂面高度", `${fmt(m.h_top_mm, 2)} mm (平整度 ${fmt(m.top_flatness_mm, 2)}、傾斜 ${fmt(m.top_tilt_deg, 1)}°)`]);
+    if (m.top_rect) rows.push(["頂面長 × 寬", `${fmt(m.top_rect.long_mm)} × ${fmt(m.top_rect.short_mm)} mm (轉角 ${fmt(m.top_rect.angle_deg)}°)`]);
+    if (m.footprint_rect) rows.push(["底面外框", `${fmt(m.footprint_rect.long_mm)} × ${fmt(m.footprint_rect.short_mm)} mm`]);
+    rows.push(["體積 (約)", `${fmt(m.volume_cm3)} cm³`], ["側面點數", fmt(m.side_points, 0)]);
+  } else rows.push(["量測", "<span class='muted'>沒有 result.json</span>"]);
+  const pv = (r.per_view || []).filter(v => v.fused && v.h_top_mm !== undefined);
+  if (pv.length > 1) {
+    const hs = pv.map(v => v.h_top_mm), mean = hs.reduce((a, b) => a + b, 0) / hs.length;
+    const sd = Math.sqrt(hs.map(v => (v - mean) ** 2).reduce((a, b) => a + b, 0) / hs.length);
+    rows.push(["各視角頂面高", `${pv.length} 個近拍視角,平均 ${fmt(mean, 2)} ± ${fmt(sd, 2)} mm`]);
+  }
+  if (inf) rows.push(["紀錄", `<a href="#" data-run="${esc(inf.run)}">${esc(inf.run)}</a>`]);
+  kv($("#m3-kv"), rows);
+  $$("#m3-kv [data-run]").forEach(a => a.onclick = e => { e.preventDefault(); openRun(a.dataset.run); });
+}
+async function openModel(id) {
+  if (!M3_OK) return;
+  try {
+    $("#m3-run").value = id;
+    M3_CUR = id;
+    m3Info(await Viewer3D.load(id));
+  } catch (e) { toast("載入模型失敗:" + e.message); }
+}
+async function loadModels(autoOpenNewest) {
+  try {
+    const list = await api("/api/models");
+    const newest = list[0] && list[0].id;
+    const changed = newest !== (M3_LIST[0] && M3_LIST[0].id);
+    M3_LIST = list;
+    $("#m3-run").innerHTML = list.length ? list.map(r => {
+      const res = r.result || {};
+      const dims = res.top_long_mm ? ` · 頂 ${res.top_long_mm.toFixed(1)}×${res.top_short_mm.toFixed(1)}×${(res.h_top_mm || 0).toFixed(1)}` : "";
+      return `<option value="${esc(r.id)}">${esc(r.id)}${esc(dims)}</option>`;
+    }).join("") : `<option value="">(還沒有立體模型:先執行「多視角立體重建」)</option>`;
+    if (M3_CUR) $("#m3-run").value = M3_CUR;
+    if (newest && (autoOpenNewest || (changed && M3_CUR))) openModel(newest);
+  } catch (e) { /* 伺服器舊版沒有 /api/models */ }
+}
+M3_OK = Viewer3D.init($("#m3-canvas"));
+$("#m3-run").onchange = e => e.target.value && openModel(e.target.value);
+$("#m3-refresh").onclick = () => loadModels(false);
+$$("[data-m3view]").forEach(b => b.onclick = () => Viewer3D.view(b.dataset.m3view));
+$$("input[name=m3-color]").forEach(r => r.onchange = () => Viewer3D.set("mode", r.value));
+$("#m3-obj").onchange = e => Viewer3D.set("objOnly", e.target.checked);
+$("#m3-size").oninput = e => Viewer3D.set("size", +e.target.value);
+loadModels(true);
+setInterval(() => loadModels(false), 10000);
 
 // ---------------- 啟動 ----------------
 setView("color");

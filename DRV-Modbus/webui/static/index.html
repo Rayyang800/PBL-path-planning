@@ -36,6 +36,24 @@
     </div>
 
     <div class="card">
+      <div class="card-head"><h2>立體模型</h2>
+        <select id="m3-run" title="有 model.ply 的紀錄 (多視角立體重建)"></select>
+        <button class="btn ghost small" id="m3-refresh">重新整理</button></div>
+      <div class="m3-wrap"><canvas id="m3-canvas"></canvas>
+        <div class="m3-hint">左鍵拖曳 旋轉 · 右鍵 / Shift+拖曳 平移 · 滾輪 縮放 · 雙擊 重設</div></div>
+      <div class="row m3-ctrl">
+        <button class="btn small" data-m3view="iso">斜視</button><button class="btn small" data-m3view="top">俯視</button>
+        <button class="btn small" data-m3view="front">正視</button><button class="btn small" data-m3view="side">側視</button>
+        <label class="chk"><input type="radio" name="m3-color" value="rgb" checked> 原色</label>
+        <label class="chk"><input type="radio" name="m3-color" value="height"> 高度色</label>
+        <label class="chk"><input type="checkbox" id="m3-obj"> 只顯示物體 (高於紙面 1.5 mm)</label>
+        <label class="chk">點大小 <input type="range" id="m3-size" min="1" max="8" step="0.5" value="2.5"></label>
+      </div>
+      <div class="kv" id="m3-kv"></div>
+      <div class="muted small">綠框 = 頂面 (最高的平台)、橘框 = 底面外框;格線 10 mm;紅/綠/藍短線 = 紙面 x / y (往下) / 高度。</div>
+    </div>
+
+    <div class="card">
       <div class="card-head"><h2>最近的執行紀錄</h2><span class="muted small">每次實作都完整記錄 (runs/)</span>
         <button class="btn ghost" id="btn-refresh-runs">重新整理</button></div>
       <div class="table-wrap">
@@ -94,6 +112,12 @@
         <span style="color:#ff00ff">洋紅線 = 深度找到的縫</span>(勾選「疊圖」)。深度用 848×480、0.1 mm 單位、8 幀中位數。</div>
       <div class="task-row"><div><b>近距離深度量測</b><div class="muted small">home 量 3 組 → 垂直下降 150 mm 再量 3 組 → 回 home,比較精度</div></div>
         <div class="row"><button class="btn primary" data-launch="depth_closeup" data-mode="go">執行</button></div></div>
+      <div class="task-row"><div><b>沿脊線描繪 (工件 A)</b><div class="muted small">快速掃描 5 點 (正上方、不傾斜) 找脊線 → 人工確認筆尖碰到脊線 (c) → 沿脊線畫。dry-run 只用 home 一張出計畫圖</div></div>
+        <div class="row"><button class="btn" data-launch="ridge_trace" data-mode="dry">dry-run</button>
+          <button class="btn primary" data-launch="ridge_trace" data-mode="go">執行</button></div></div>
+      <div class="task-row"><div><b>多視角立體重建</b><div class="muted small">手臂帶相機在物體上方與周圍逐點拍深度 → 合併成點雲、量尺寸 (任何形狀),結果在左邊「立體模型」視窗看。<b>不下筆</b>;筆尖一直比物體高 (設定在下方「多視角立體重建」)</div></div>
+        <div class="row"><button class="btn" data-launch="scan3d" data-mode="dry">dry-run</button>
+          <button class="btn primary" data-launch="scan3d" data-mode="go">執行</button></div></div>
       <div class="task-row"><div><b>深度設定比較</b><div class="muted small">唯讀;用設定的板厚當真值,比較 5 組深度設定</div></div>
         <div class="row"><button class="btn" data-launch="depth_compare" data-mode="dry">執行</button></div></div>
     </div>
@@ -151,6 +175,7 @@
 </dialog>
 
 <div id="toast"></div>
+<script src="/static/viewer3d.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

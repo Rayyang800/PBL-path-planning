@@ -51,6 +51,9 @@ DEFAULT_CONFIG = {
     "quick": {"step": 10.0, "hop": 3.0, "press": 0.0, "start_x": None, "start_y": None},
     "seam": {"board_h": 5.0, "step_mm": 2.0, "approach": 3.0, "press": 0.0, "reverse": False, "source": "auto", "look_dz": 150.0},
     "verify": {"target": "auto", "radius": 8.0, "dz": 0.0},
+    "ridge": {"views": 5, "approach": 3.0, "press": 0.0, "step_mm": 2.0, "end_margin": 8.0, "reverse": False},
+    "scan": {"cam_h": 380.0, "radius": 60.0, "n_ring": 8, "clearance": 40.0, "obj_h": 0.0,
+             "tilts": "25,40", "n_tilt": 10, "view_dist": 290.0},
 }
 WORKPIECES = {"A": "A 立體 L 型 (脊線塗)", "B": "B 兩片板縫合塗", "C": "C 平面其他形狀 (邊緣塗)"}
 
@@ -462,6 +465,8 @@ def task_registry(cfg):
         return a + (["--go"] if mode == "go" else [])
 
     vf = cfg.get("verify", DEFAULT_CONFIG["verify"])
+    sc = cfg.get("scan", DEFAULT_CONFIG["scan"])
+    rg = cfg.get("ridge", DEFAULT_CONFIG["ridge"])
 
     def verify(mode):
         a = ["--target", str(vf.get("target") or "auto"), "--radius", str(vf.get("radius", 8.0)),
@@ -489,6 +494,19 @@ def task_registry(cfg):
         "depth_closeup": {"label": "近距離深度量測 (手臂下降 150 mm)", "script": "depth_closeup.py", "uses_camera": True,
                           "moves": True, "always_moves": True,
                           "build": lambda m: ["--dz", "150", "--board-h", str(float(sm.get("board_h") or 5.0))]},
+        "ridge_trace": {"label": "沿脊線描繪 (工件 A)", "script": "ridge_trace.py", "uses_camera": True, "moves": True,
+                        "build": lambda m: ["--views", str(int(rg.get("views", 5))), "--approach", str(rg.get("approach", 3.0)),
+                                            "--press", str(rg.get("press", 0.0)), "--step-mm", str(rg.get("step_mm", 2.0)),
+                                            "--end-margin", str(rg.get("end_margin", 8.0)),
+                                            "--speed", str(min(15, int(cm.get("speed", 10))))]
+                                           + (["--reverse"] if rg.get("reverse") else []) + (["--go"] if m == "go" else [])},
+        "scan3d": {"label": "多視角立體重建 (不下筆)", "script": "scan3d.py", "uses_camera": True, "moves": True,
+                   "build": lambda m: ["--cam-h", str(sc.get("cam_h", 380.0)), "--radius", str(sc.get("radius", 60.0)),
+                                       "--n-ring", str(int(sc.get("n_ring", 8))), "--clearance", str(max(20.0, float(sc.get("clearance", 40.0)))),
+                                       "--obj-h", str(float(sc.get("obj_h") or 0.0)),
+                                       "--tilts", str(sc.get("tilts") if sc.get("tilts") is not None else "25,40").replace(" ", "") or "",
+                                       "--n-tilt", str(int(sc.get("n_tilt", 10))), "--view-dist", str(float(sc.get("view_dist") or 290.0)),
+                                       "--speed", str(min(20, int(cm.get("speed", 15))))] + (["--go"] if m == "go" else [])},
         "depth_compare": {"label": "深度設定比較 (唯讀)", "script": "depth_compare.py", "uses_camera": True, "moves": False,
                           "build": lambda m: ["--truth", str(float(sm.get("board_h") or 5.0))]},
         "seam_boards": {"label": "縫合線擷取 (唯讀)", "script": "seam_boards.py", "uses_camera": True, "moves": False,
@@ -583,6 +601,26 @@ def list_runs(limit=40):
     return out
 
 
+def list_models(limit=30):
+    """有立體模型 (data/model.ply) 的紀錄,新到舊。"""
+    out = []
+    if not os.path.isdir(RUNS_DIR):
+        return out
+    for d in sorted(os.listdir(RUNS_DIR), reverse=True):
+        if not os.path.isfile(os.path.join(RUNS_DIR, d, "data", "model.ply")):
+            continue
+        try:
+            with open(os.path.join(RUNS_DIR, d, "meta.json"), encoding="utf-8") as f:
+                m = json.load(f)
+        except (OSError, ValueError):
+            m = {}
+        out.append({"id": d, "kind": m.get("kind"), "label": m.get("label"), "status": m.get("status"),
+                    "started": m.get("started"), "result": m.get("result")})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def newest_run_since(t0):
     if not os.path.isdir(RUNS_DIR):
         return None
@@ -654,7 +692,7 @@ class App:
 
 MIME = {".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
         ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".json": "application/json; charset=utf-8",
-        ".log": "text/plain; charset=utf-8", ".csv": "text/csv; charset=utf-8", ".svg": "image/svg+xml"}
+        ".log": "text/plain; charset=utf-8", ".ply": "text/plain; charset=utf-8", ".csv": "text/csv; charset=utf-8", ".svg": "image/svg+xml"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -704,6 +742,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, status_payload())
             if u.path == "/api/runs":
                 return self._send(200, list_runs(int(q.get("limit", 40))))
+            if u.path == "/api/models":
+                return self._send(200, list_models(int(q.get("limit", 30))))
             if u.path == "/api/run":
                 return self._send(200, run_detail(q["id"]))
             if u.path == "/api/config":

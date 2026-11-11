@@ -30,3 +30,11 @@ DRV-Modbus/pen_sheet_plan.png
 DRV-Modbus/webui/job_config.json
 DRV-Modbus/pen_verify_plan.png
 DRV-Modbus/seam_trace_plan.png
+
+# 程式產生的預覽圖
+DRV-Modbus/scan3d_plan.png
+DRV-Modbus/scan3d_result.png
+DRV-Modbus/ridge_trace_plan.png
+
+# 實拍照片 (公開 repo 不放)
+1110照片/
