@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """停止指令測試 (假的 Modbus 連線,不碰手臂)。  python tests\\test_stop.py
-檢查:移動中 on_poll 回傳 True 或發生 Ctrl+C 時,Go_Position 會寫 0x0300 = 0 並丟 Interrupted。"""
+檢查:移動中 on_poll 回傳 True 或發生 Ctrl+C 時,Go_Position 會寫 0x0300 = 1000 並丟 Interrupted。"""
 import os
 import sys
 import time
@@ -15,7 +15,9 @@ class FakeClient:
         self.writes = []
 
     def write_register(self, addr, val, slave):
+        from pymodbus.register_write_message import WriteSingleRegisterResponse
         self.writes.append((addr, val))
+        return WriteSingleRegisterResponse(addr, val)
 
     def write_registers(self, addr, vals, slave):
         self.writes.append((addr, "payload"))
@@ -38,8 +40,8 @@ def main():
         send.Go_Position(c, 100, 0, 400, -179, 0.5, -107, 15, send.MovL, on_poll=poll)
         raise AssertionError("應該要中斷")
     except send.Interrupted as e:
-        assert str(e) == "key" and c.writes[-1] == (0x0300, 0), c.writes
-        print("OK 按鍵 -> 寫 0x0300=0,Interrupted('key')")
+        assert str(e) == "key" and c.writes[-1] == (0x0300, 1000), c.writes
+        print("OK 按鍵 -> 寫 0x0300=1000,Interrupted('key')")
 
     # 2. Ctrl+C (在等待迴圈中發生 KeyboardInterrupt)
     c = FakeClient()
@@ -50,8 +52,8 @@ def main():
         send.Go_Position(c, 100, 0, 400, -179, 0.5, -107, 15, send.MovL, on_poll=poll_ctrl_c)
         raise AssertionError("應該要中斷")
     except send.Interrupted as e:
-        assert str(e) == "ctrl_c" and c.writes[-1] == (0x0300, 0), c.writes
-        print("OK Ctrl+C -> 寫 0x0300=0,Interrupted('ctrl_c')")
+        assert str(e) == "ctrl_c" and c.writes[-1] == (0x0300, 1000), c.writes
+        print("OK Ctrl+C -> 寫 0x0300=1000,Interrupted('ctrl_c')")
     print("PASS")
 
 

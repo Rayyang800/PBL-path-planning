@@ -249,6 +249,8 @@ const FIELDS = [
   ["circle.inset", "描繪半徑往內縮 (mm,讓筆在捲邊上)", "number"], ["circle.approach", "自動降到捲邊上方 (mm)", "number"],
   ["circle.press", "多壓 (mm)", "number"], ["circle.step_mm", "圓周每幾 mm 一點", "number"],
   ["circle.cw", "順時針", "checkbox"],
+  ["circle.gripper_reach", "TCP 到夾爪最遠外緣上界 (mm，含張開)", "number"],
+  ["circle.camera_reach", "TCP 到相機及支架最遠外緣上界 (mm)", "number"],
   ["circle.tilt_deg", "筆往圓心外傾斜 (度,0 = 垂直;需先做筆尖 3D 校正)", "number"],
   ["pivot.tilt", "筆尖 3D 校正:傾斜角度 (度)", "number"], ["pivot.guess_len", "筆尖 3D 校正:筆長初估 (mm)", "number"],
   ["pivot.approach", "筆尖 3D 校正:傾斜後先停在上方 (mm)", "number"],

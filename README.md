@@ -6,6 +6,13 @@
 - **簡報**:`PBL專題規劃報告.pptx`、`PBL專題規劃報告_三種工件版.pptx`
 - **程式**:[`DRV-Modbus/`](DRV-Modbus/),以 [liaochikon/DRV-Modbus](https://github.com/liaochikon/DRV-Modbus)(MIT License)為基礎擴充
 
+## 11 月 18 日交接進度
+
+直線脊線已支援連續描繪與前後影像偏差分析。工件 C 可用垂直筆描繪罐頭外圈，並從筆跡更新水平偏移。筆尖 3D 校正及傾斜描繪仍待現場驗收。傾斜前需有本次裝夾的有效 `pen_tip` 校正，並填入 TCP 到夾爪、相機最遠外緣的實測上界（mm）。Motion Stop 已依台達表更正，實機停止效果待確認。
+
+接手時另向組員取得 `DRV-Modbus/runs/`、`DRV-Modbus/webui/job_config.json` 與台達 Modbus 位址表。程式狀態與現場驗收項目見 [專案規格 §7、§11](PROJECT_SPEC.md)。
+
+
 ## 環境安裝 (Windows)
 
 ```bash

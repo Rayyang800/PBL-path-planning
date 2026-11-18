@@ -9,8 +9,8 @@
   之後任何姿態 R:要筆尖到 T,TCP = T - R·p。
 
 流程 (--go)
-  1. 移到校正紙上一個空白處 (--at,預設紙面 (148, 35) mm) 上方,垂直往下人工找接觸 (c) -> 在紙上點一個點
-  2. 抬起 30 mm,依序傾斜 (預設繞手臂 x、y 軸 ±20°):用目前的 p 估計 TCP,先停在估計位置上方 --approach (40) mm,
+  1. 移到校正紙上一個空白處 (--at,預設紙面 (148, 185) mm) 上方,垂直往下人工找接觸 (c) -> 在紙上點一個點
+  2. 抬到轉動高度,依序傾斜 (預設繞手臂 x、y 軸 ±12°):用目前的 p 估計 TCP,先停在估計位置上方 --approach (40) mm,
      你用 Enter (往下)、x / y (水平微調)、u (往上) 讓筆尖剛好碰到那個點的中心,按 c
   3. 每多一個姿態就重算 p;最後存 calibrations/pen_tip/ (p、各點殘差、歐拉角慣例)
 
@@ -22,7 +22,7 @@
 
   python pen_pivot.py --go
   python pen_pivot.py --go --tilt 15 --approach 30
-按鍵:Enter 往下 / 數字 改步距 / u 往上 / x 2、y -3 水平微調 / c 對準了 / q 結束;Ctrl+C = 停止 -> 抬起回 home
+按鍵:Enter 往下 / 數字 改步距 / u 往上 / x 2、y -3 水平微調 / c 對準了 / q 結束;Ctrl+C = 中止，現場確認姿態
 """
 import argparse
 import json
@@ -143,8 +143,8 @@ def main():
             # 現在所有轉動與水平移動都在 z_rot (垂直時筆尖離紙 --rot-height,預設 100 mm) 做,只在目標正上方垂直下降。
             z_rot = zc + args.rot_height
             arm.move(x, y, z_rot)
-            # 順序:11-18 實測繞 y 軸 +20° 要往外伸 ~9 cm,手臂走不到 -> 排最後;前三個 (x+、x-、y-) 就有兩個不同轉軸,夠解
-            for axis, sgn in (([1, 0, 0], 1), ([1, 0, 0], -1), ([0, 1, 0], -1), ([0, 1, 0], 1)):
+            # 順序:11-18 實測繞 y 軸 +20° 要往外伸 ~9 cm,手臂走不到 -> 排最後;先取 x+、y- 以取得兩個不同轉軸
+            for axis, sgn in (([1, 0, 0], 1), ([0, 1, 0], -1), ([1, 0, 0], -1), ([0, 1, 0], 1)):
                 Ri = stl.tilt_base(axis, sgn * args.tilt) @ R0
                 ori = stl.angles_of(Ri, CONV, near=home[3:])
                 T_pred = X_est - Ri @ p_est
@@ -177,10 +177,16 @@ def main():
                 arm.move(xi, yi, max(zi + 30.0, z_rot), ori=home[3:])   # 再在高處轉回垂直 (筆尖會往下掉 ~40 mm,仍離紙 ~100 mm)
                 arm.ori = list(home[3:])
                 if len(recs) >= 3:
-                    p_est, X_est, rms, res, sv = solve_tip(recs)
+                    p_fit, X_fit, rms, res, sv = solve_tip(recs)
+                    if min(sv) <= 0.1 or rms >= 2.0:
+                        print("姿態多樣性或殘差未達標，保留先前的接近位置估計")
+                        continue
+                    p_est, X_est = p_fit, X_fit
                     print(f"  目前估計:筆尖在工具座標 {np.round(p_est, 1).tolist()} mm,殘差 {rms:.2f} mm")
             arm.move(*home[:3], ori=home[3:])
-        except (Quit, Paused, KeyboardInterrupt, ConnectionError, send.CommandIgnored, TimeoutError) as e:
+        except (Paused, KeyboardInterrupt, ConnectionError, send.CommandIgnored, TimeoutError) as e:
+            print("校正已中斷，請現場確認姿態與手臂狀態:", e)
+        except Quit as e:
             print("\n停止:", e, "-> 抬起回 home")
             try:
                 p_ = read_pose(c)
