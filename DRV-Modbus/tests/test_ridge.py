@@ -55,7 +55,22 @@ def test_roof_with_wire_and_slope():
     print(f"  有電線 + 坡度:長 {r['length_mm']:.1f}、坡度 {r['slope_deg']:.2f}°、路徑 {len(path)} 點")
 
 
+def test_check_projection_roundtrip():
+    """ridge_check:紙面點 (含高度) 投影到影像再反投影回同一高度,要回到原位。"""
+    import ridge_check as rc
+    K = np.array([[911.5, 0, 640.0], [0, 911.7, 364.0], [0, 0, 1.0]])
+    R = np.diag([1.0, -1.0, -1.0])
+    C = np.array([150.0, 100.0, -380.0])
+    pose = {"R": R, "t": -R @ C}
+    P = np.array([[140.0, 60.0, 30.0], [160.0, 150.0, 29.0], [120.0, 100.0, 0.0]])
+    uv = rc.project(pose, K, P)
+    xy = rc.backproject_to_height(pose, K, uv, P[:, 2])
+    assert np.allclose(xy, P[:, :2], atol=1e-6), xy
+
+
 if __name__ == "__main__":
+    test_check_projection_roundtrip()
+    print("PASS test_check_projection_roundtrip")
     test_roof()
     print("PASS test_roof")
     test_roof_with_wire_and_slope()

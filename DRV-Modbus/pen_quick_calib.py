@@ -19,6 +19,7 @@
 按鍵:Ctrl+C = 停止 -> 垂直抬起 -> 回 home 結束;空白/Esc/p = 停止並選單;移動中 o/g = 夾爪開/夾
 """
 import argparse
+import re
 import json
 import os
 import sys
@@ -59,9 +60,23 @@ def point_menu(arm, h_text="回 home 用已完成的點分析"):
             return ch
 
 
-def probe_with_nudge(arm, x, y, z, step, z_floor, z_safe):
-    """人工下降 + 水平微調。回傳 (x, y, z_touch)。"""
+PAPER_HELP = ("  w / s / a / d 3 = 往校正紙的 上 / 下 / 左 / 右 移 3 mm (以網頁影像的校正紙方向為準,tag 1、0 那邊是上)")
+
+
+def parse_nudge(s):
+    """'x 2'、'x2'、'x+2'、'y-3'、'w 3'、'a2' -> (軸, mm);不是微調指令回傳 None。11-18:原本只認 'x 2',輸入 'x2' 不會動。"""
+    m = re.fullmatch(r"([xywasd])\s*([+-]?\d+(?:\.\d+)?)", s)
+    if not m:
+        return None
+    return m.group(1), float(m.group(2))
+
+
+def probe_with_nudge(arm, x, y, z, step, z_floor, z_safe, paper_A=None):
+    """人工下降 + 水平微調。回傳 (x, y, z_touch)。
+    paper_A:筆尖校正的 A (紙面 -> 手臂 XY 2x2);給了就可以用 w/a/s/d 依校正紙方向微調。"""
     print(PROBE_HELP)
+    if paper_A is not None:
+        print(PAPER_HELP)
     while True:
         raw = ask(f"    位置 ({x:.1f}, {y:.1f})  z = {z:.2f} (步距 {step:g}) > ")
         s = raw.strip().lower()
@@ -76,12 +91,26 @@ def probe_with_nudge(arm, x, y, z, step, z_floor, z_safe):
         if s in ("o", "g"):
             arm.grip(close=s == "g", delay=0.5)
             continue
-        if s[:1] in ("x", "y") and len(s.split()) == 2:
-            try:
-                d = float(s.split()[1])
-            except ValueError:
-                print(PROBE_HELP)
+        nd = parse_nudge(s)
+        if nd is not None and (nd[0] in ("x", "y") or paper_A is not None):
+            ax, d = nd
+            if abs(d) > 5:
+                print("    微調每次最多 5 mm")
                 continue
+            if ax in ("x", "y"):
+                dx, dy = (d, 0.0) if ax == "x" else (0.0, d)
+            else:                           # 紙面方向:上 = 紙面 -y、下 = +y、左 = -x、右 = +x
+                vp = {"w": (0.0, -1.0), "s": (0.0, 1.0), "a": (-1.0, 0.0), "d": (1.0, 0.0)}[ax]
+                v = np.asarray(paper_A, float) @ np.array(vp)
+                dx, dy = v / np.linalg.norm(v) * d
+            if z < z_safe - 1:
+                arm.move(x, y, z + 2.0)            # 先離開紙面 2 mm 再水平移,避免拖出一條線
+            x, y = x + dx, y + dy
+            arm.move(x, y, z + 2.0 if z < z_safe - 1 else z)
+            if z < z_safe - 1:
+                arm.move(x, y, z)
+            print(f"    已移 (手臂 x {dx:+.1f}, y {dy:+.1f}) mm")
+            continue
             if abs(d) > 5:
                 print("    微調每次最多 5 mm")
                 continue

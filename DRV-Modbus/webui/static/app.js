@@ -129,7 +129,12 @@ const TASK_KEYS = {
   sheet_calib: { hint: "第一點:人工下降到剛好畫得出來按 c,之後自動", keys: [...PROBE_KEYS, ...COMMON_KEYS] },
   quick_calib: { hint: "第一點:人工下降到剛好點出顏色按 c,之後自動", keys: [...PROBE_KEYS, ...COMMON_KEYS] },
   depth_closeup: { hint: "先在 home 量 3 組;提示時按 Enter 手臂才會垂直下降 150 mm,量完自動回 home", keys: [["Enter", "開始下降"], ["Ctrl+C", "停止"]] },
-  ridge_trace: { hint: "Enter → 快速掃描 (正上方,不傾斜) → 找脊線 → Enter 移到起點上方 → 每步 0.5 mm 往下,筆尖剛好碰到脊線按 c → 自動沿脊線畫",
+  pen_pivot: { hint: "Enter 開始 → 垂直往下點一個點 (c) → 每個傾斜姿態:Enter 往下 (輸入 0.5 改小步)、x / y 微調,筆尖對準那個點中心按 c",
+    keys: [["Enter", "往下"], ["0.5", "改步距"], ["u", "往上"], ["x 2", "水平微調"], ["c", "對準了"], ...COMMON_KEYS] },
+  circle_trace: { hint: "Enter → 正上方拍照 → 找圓 → Enter 移到起點上方 → 每步 0.5 mm 往下,筆尖剛好碰到捲邊按 c → 繞一圈 → 回正上方拍照量偏差",
+    keys: [["Enter", "往下 0.5"], ["u", "往上"], ["x 2", "微調 (套用整圈)"], ["c", "記下高度開始畫"], ...COMMON_KEYS] },
+  ridge_check: { hint: "不動手臂;分析最新一次脊線描繪的筆跡偏差,結果在執行紀錄 (trace_check)", keys: [] },
+  ridge_trace: { hint: "Enter → 快速掃描 (正上方,不傾斜) → 找脊線 → Enter 移到起點上方 → 每步 0.5 mm 往下,筆尖剛好碰到脊線按 c → 自動沿脊線畫 → 回正上方拍照量偏差",
     keys: [["Enter", "往下 0.5"], ["u", "往上"], ["x 2", "微調 (套用整條)"], ["c", "記下高度開始畫"], ...COMMON_KEYS] },
   scan3d: { hint: "執行:Enter → 正上方一圈 → 原地試轉 3 次量手眼 → 再按 Enter → 傾斜往物體看一圈 (會降低、傾斜) → 回 home 合併。不下筆",
     keys: [["Enter", "開始"], ["Ctrl+C", "停止→回 home (已拍的照樣合併)"], ["空白", "選單 r/s/h/q"]] },
@@ -182,12 +187,13 @@ async function openRun(id) {
     const m = d.meta;
     $("#dlg-title").textContent = id;
     const imgs = d.images.filter(n => /\.(png|jpe?g)$/i.test(n));
-    const res = d.results["verify_result.json"] || d.results["marks_result.json"] || d.results["result.json"];
+    const tc = d.results["trace_check.json"] || d.results["circle_check.json"];
+    const res = d.results["verify_result.json"] || d.results["marks_result.json"] || (tc && (tc.best || tc)) || d.results["result.json"];
     let resTxt = "";
     if (res) {
       const keys = ["ok", "mean_dev_mm", "p90_dev_mm", "offset_mm", "center_error_mm", "center_error_xy_mm", "circle_radius_mm", "radius_error_mm", "coverage",
         "fit", "rms_mm", "max_mm", "loo_mean_mm", "loo_max_mm", "n_points", "rotation_deg", "rotation_vs_rough_deg",
-        "est_err_at_100mm", "gap_mm", "length_mm", "reason"];
+        "est_err_at_100mm", "gap_mm", "length_mm", "mean_abs_dev_mm", "p90_abs_dev_mm", "max_abs_dev_mm", "bias_mm", "radial_bias_mm", "longest_gap_mm", "view", "reason"];
       resTxt = keys.filter(k => res[k] !== undefined).map(k => `${k}: ${typeof res[k] === "number" ? res[k].toFixed(3) : res[k]}`).join("\n");
     }
     $("#dlg-body").innerHTML = `
@@ -238,11 +244,20 @@ const FIELDS = [
   ["sec", "畫圓驗證"],
   ["verify.target", "目標十字編號 (auto = 最靠近紙中心)", "text"], ["verify.radius", "圓半徑 (mm)", "number"],
   ["verify.dz", "比 z_touch 多壓 (mm,圓斷斷續續時給 0.5)", "number"],
+  ["sec", "沿圓外圈描繪 (工件 C)"],
+  ["circle.views", "快速掃描視角數 (1 / 3 / 5)", "choice", null, {1: "1:只拍正上方", 3: "3", 5: "5"}],
+  ["circle.inset", "描繪半徑往內縮 (mm,讓筆在捲邊上)", "number"], ["circle.approach", "自動降到捲邊上方 (mm)", "number"],
+  ["circle.press", "多壓 (mm)", "number"], ["circle.step_mm", "圓周每幾 mm 一點", "number"],
+  ["circle.cw", "順時針", "checkbox"],
+  ["circle.tilt_deg", "筆往圓心外傾斜 (度,0 = 垂直;需先做筆尖 3D 校正)", "number"],
+  ["pivot.tilt", "筆尖 3D 校正:傾斜角度 (度)", "number"], ["pivot.guess_len", "筆尖 3D 校正:筆長初估 (mm)", "number"],
+  ["pivot.approach", "筆尖 3D 校正:傾斜後先停在上方 (mm)", "number"],
   ["sec", "沿脊線描繪 (工件 A)"],
   ["ridge.views", "快速掃描視角數 (1 / 3 / 5)", "choice", null, {1: "1:只拍正上方", 3: "3:正上方 + 左右", 5: "5:正上方 + 前後左右"}],
   ["ridge.approach", "自動降到脊線上方 (mm)", "number"], ["ridge.press", "沿脊線多壓 (mm)", "number"],
   ["ridge.step_mm", "路徑點間距 (mm)", "number"], ["ridge.end_margin", "兩端各留不畫 (mm)", "number"],
   ["ridge.reverse", "從另一端開始", "checkbox"],
+  ["ridge.segmented", "逐點描繪 (每點停一下;預設不勾 = 一次連續畫完)", "checkbox"],
   ["sec", "多視角立體重建"],
   ["scan.cam_h", "掃描時相機離紙 (mm,home 約 520)", "number"], ["scan.radius", "周圍視角半徑 (mm)", "number"],
   ["scan.n_ring", "周圍視角數 (0 = 只拍正上方)", "number"], ["scan.clearance", "筆尖比物體高至少 (mm,≥ 20)", "number"],

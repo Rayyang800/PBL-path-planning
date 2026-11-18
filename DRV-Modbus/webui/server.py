@@ -51,7 +51,9 @@ DEFAULT_CONFIG = {
     "quick": {"step": 10.0, "hop": 3.0, "press": 0.0, "start_x": None, "start_y": None},
     "seam": {"board_h": 5.0, "step_mm": 2.0, "approach": 3.0, "press": 0.0, "reverse": False, "source": "auto", "look_dz": 150.0},
     "verify": {"target": "auto", "radius": 8.0, "dz": 0.0},
-    "ridge": {"views": 5, "approach": 3.0, "press": 0.0, "step_mm": 2.0, "end_margin": 8.0, "reverse": False},
+    "circle": {"views": 1, "inset": 2.5, "approach": 5.0, "press": 0.0, "step_mm": 8.0, "cw": False, "tilt_deg": 0.0},
+    "pivot": {"tilt": 12.0, "guess_len": 260.0, "approach": 40.0},
+    "ridge": {"views": 5, "approach": 5.0, "press": 0.0, "step_mm": 2.0, "end_margin": 8.0, "reverse": False, "segmented": False},
     "scan": {"cam_h": 380.0, "radius": 60.0, "n_ring": 8, "clearance": 40.0, "obj_h": 0.0,
              "tilts": "25,40", "n_tilt": 10, "view_dist": 290.0},
 }
@@ -467,6 +469,7 @@ def task_registry(cfg):
     vf = cfg.get("verify", DEFAULT_CONFIG["verify"])
     sc = cfg.get("scan", DEFAULT_CONFIG["scan"])
     rg = cfg.get("ridge", DEFAULT_CONFIG["ridge"])
+    cc = cfg.get("circle", DEFAULT_CONFIG["circle"])
 
     def verify(mode):
         a = ["--target", str(vf.get("target") or "auto"), "--radius", str(vf.get("radius", 8.0)),
@@ -499,7 +502,22 @@ def task_registry(cfg):
                                             "--press", str(rg.get("press", 0.0)), "--step-mm", str(rg.get("step_mm", 2.0)),
                                             "--end-margin", str(rg.get("end_margin", 8.0)),
                                             "--speed", str(min(15, int(cm.get("speed", 10))))]
-                                           + (["--reverse"] if rg.get("reverse") else []) + (["--go"] if m == "go" else [])},
+                                           + (["--reverse"] if rg.get("reverse") else [])
+                                           + (["--segmented"] if rg.get("segmented") else []) + (["--go"] if m == "go" else [])},
+        "circle_trace": {"label": "沿圓外圈描繪 (工件 C 罐頭)", "script": "circle_trace.py", "uses_camera": True, "moves": True,
+                         "build": lambda m: ["--views", str(int(cc.get("views", 1))), "--inset", str(cc.get("inset", 2.5)),
+                                             "--approach", str(cc.get("approach", 5.0)), "--press", str(cc.get("press", 0.0)),
+                                             "--step-mm", str(cc.get("step_mm", 8.0)),
+                                             "--speed", str(min(15, int(cm.get("speed", 10))))]
+                                            + (["--cw"] if cc.get("cw") else [])
+                                            + ["--tilt-deg", str(float(cc.get("tilt_deg") or 0.0))] + (["--go"] if m == "go" else [])},
+        "pen_pivot": {"label": "筆尖 3D 校正 (傾斜描繪用)", "script": "pen_pivot.py", "uses_camera": False, "moves": True,
+                      "build": lambda m: ["--tilt", str(cfg.get("pivot", {}).get("tilt", 12.0)),
+                                          "--guess-len", str(cfg.get("pivot", {}).get("guess_len", 260.0)),
+                                          "--approach", str(cfg.get("pivot", {}).get("approach", 40.0)),
+                                          "--speed", str(min(15, int(cm.get("speed", 10))))] + (["--go"] if m == "go" else [])},
+        "ridge_check": {"label": "脊線描繪回饋分析 (最新一次)", "script": "ridge_check.py", "uses_camera": False, "moves": False,
+                        "build": lambda m: ["--latest"]},
         "scan3d": {"label": "多視角立體重建 (不下筆)", "script": "scan3d.py", "uses_camera": True, "moves": True,
                    "build": lambda m: ["--cam-h", str(sc.get("cam_h", 380.0)), "--radius", str(sc.get("radius", 60.0)),
                                        "--n-ring", str(int(sc.get("n_ring", 8))), "--clearance", str(max(20.0, float(sc.get("clearance", 40.0)))),
@@ -649,7 +667,8 @@ def run_detail(run_id):
         with open(cp, encoding="utf-8", errors="replace") as f:
             console = "".join(f.readlines()[-120:])
     results = {}
-    for name in ("marks_result.json", "verify_result.json", "trace_result.json", "result.json", "plan.json"):
+    for name in ("marks_result.json", "verify_result.json", "trace_result.json", "trace_check.json", "circle_check.json",
+                 "result.json", "plan.json"):
         fp = os.path.join(path, "data", name)
         if os.path.isfile(fp) and os.path.getsize(fp) < 400_000:
             with open(fp, encoding="utf-8") as f:

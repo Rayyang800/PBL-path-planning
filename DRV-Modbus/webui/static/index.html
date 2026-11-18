@@ -112,9 +112,15 @@
         <span style="color:#ff00ff">洋紅線 = 深度找到的縫</span>(勾選「疊圖」)。深度用 848×480、0.1 mm 單位、8 幀中位數。</div>
       <div class="task-row"><div><b>近距離深度量測</b><div class="muted small">home 量 3 組 → 垂直下降 150 mm 再量 3 組 → 回 home,比較精度</div></div>
         <div class="row"><button class="btn primary" data-launch="depth_closeup" data-mode="go">執行</button></div></div>
-      <div class="task-row"><div><b>沿脊線描繪 (工件 A)</b><div class="muted small">快速掃描 5 點 (正上方、不傾斜) 找脊線 → 人工確認筆尖碰到脊線 (c) → 沿脊線畫。dry-run 只用 home 一張出計畫圖</div></div>
+      <div class="task-row"><div><b>沿脊線描繪 (工件 A)</b><div class="muted small">快速掃描 (正上方、不傾斜) 找脊線 → 人工確認筆尖碰到脊線 (c) → 沿脊線畫 → 回正上方拍照,自動量筆跡偏差與涵蓋率。dry-run 只用 home 一張出計畫圖;「分析」= 重新分析最新一次</div></div>
         <div class="row"><button class="btn" data-launch="ridge_trace" data-mode="dry">dry-run</button>
-          <button class="btn primary" data-launch="ridge_trace" data-mode="go">執行</button></div></div>
+          <button class="btn primary" data-launch="ridge_trace" data-mode="go">執行</button>
+          <button class="btn" data-launch="ridge_check" data-mode="dry" title="不動手臂;重新分析最新一次描繪的筆跡偏差">分析</button></div></div>
+      <div class="task-row"><div><b>筆尖 3D 校正 (傾斜描繪前做一次)</b><div class="muted small">垂直點一個點 → 手臂傾斜 4 次,每次人工把筆尖對準那個點按 c → 算出筆尖相對手臂末端的位置。換筆或重夾後要重做</div></div>
+        <div class="row"><button class="btn primary" data-launch="pen_pivot" data-mode="go">執行</button></div></div>
+      <div class="task-row"><div><b>沿圓外圈描繪 (工件 C 罐頭)</b><div class="muted small">正上方拍 1 張 → 頂面外緣圓擬合 → 往內縮 inset 畫在捲邊上 (筆垂直) → 人工確認接觸 (c) → 繞一圈 → 自動量徑向偏差。dry-run 只用 home 一張出計畫圖</div></div>
+        <div class="row"><button class="btn" data-launch="circle_trace" data-mode="dry">dry-run</button>
+          <button class="btn primary" data-launch="circle_trace" data-mode="go">執行</button></div></div>
       <div class="task-row"><div><b>多視角立體重建</b><div class="muted small">手臂帶相機在物體上方與周圍逐點拍深度 → 合併成點雲、量尺寸 (任何形狀),結果在左邊「立體模型」視窗看。<b>不下筆</b>;筆尖一直比物體高 (設定在下方「多視角立體重建」)</div></div>
         <div class="row"><button class="btn" data-launch="scan3d" data-mode="dry">dry-run</button>
           <button class="btn primary" data-launch="scan3d" data-mode="go">執行</button></div></div>

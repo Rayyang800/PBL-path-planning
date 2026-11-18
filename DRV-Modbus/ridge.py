@@ -132,6 +132,14 @@ def extract_ridge(xy, h, slice_mm=2.0, top_band=1.5, end_margin=6.0, min_frac=0.
                       "dir_diff_deg": float(np.degrees(np.arccos(np.clip(abs(dirl[:2] @ np.array(out["dir_xy"])) /
                                                                          max(1e-9, np.linalg.norm(dirl[:2])), -1, 1))))}
     out["planes"] = planes
+    # 尖端高度:深度會把尖角抹圓,「每片最高點」比真正的尖端低;兩側斜面延伸的交線才是幾何上的尖端。
+    # 11-18 實測 (尺量 34 mm 的脊線,相機離紙 380 mm):最高點 29.0、斜面交線 32.1 mm。
+    out["apex_offset_mm"] = 0.0
+    out["line_apex_xyh"] = out["line_xyh"]
+    if planes and 60.0 < planes["ridge_angle_deg"] < 160.0 and 0.0 <= planes["height_diff_mm"] <= 10.0:
+        off = planes["height_diff_mm"]
+        out["apex_offset_mm"] = off
+        out["line_apex_xyh"] = [[p[0], p[1], p[2] + off] for p in out["line_xyh"]]
     return out
 
 

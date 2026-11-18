@@ -1,0 +1,21 @@
+{
+  "schema": 2,
+  "name": "pen_xy_offset",
+  "created": "2026-11-18T15:46:18+08:00",
+  "source_run": "runs/20261118-145900_ridge_trace",
+  "supersedes": "20261118-154618.json",
+  "notes": "筆跡回饋分析自動記錄",
+  "data": {
+    "n": [
+      [
+        -0.999963736998644,
+        0.008516142771629709
+      ]
+    ],
+    "b": [
+      -0.655236620268944
+    ],
+    "kind": "ridge",
+    "backfill": true
+  }
+}

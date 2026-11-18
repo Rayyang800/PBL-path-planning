@@ -111,10 +111,18 @@ def _default(o):
     return str(o)
 
 
-def _dump(path, obj):
+def _dump(path, obj, retries=40):
+    """寫 JSON (先寫 .tmp 再換名,避免寫一半)。Windows 上目標檔若正被別的程式開著 (網頁每 8 秒讀 meta.json、防毒、
+    雲端同步),os.replace 會 PermissionError -> 重試最多約 2 秒;11-18 掃描就是在這裡中斷。"""
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, indent=2, ensure_ascii=False, default=_default)
+    for k in range(retries):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(0.05)
     os.replace(tmp, path)
 
 
@@ -176,7 +184,10 @@ class RunLog:
 
     # ----- writing helpers (return path relative to the run folder) -----
     def _write_meta(self):
-        _dump(os.path.join(self.path, "meta.json"), self.meta)
+        try:
+            _dump(os.path.join(self.path, "meta.json"), self.meta)
+        except OSError as e:               # 紀錄寫不進去不能讓手臂流程中斷;下次寫入會再補上完整內容
+            print(f"[run_log] meta.json 暫時寫不進去 ({e}),稍後再寫", file=sys.stderr)
 
     def event(self, type_, **data):
         if self._finished:
