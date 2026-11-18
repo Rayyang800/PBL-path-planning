@@ -439,7 +439,7 @@ python go_home.py --speed 10
 
 11-18 實機驗收仍待完成
 
-- 在同一次裝夾、同一紙面標記取得至少三個獨立姿態（垂直與兩個不同轉軸）。確認 `calibrations/pen_tip/latest.json` 的殘差及姿態多樣性通過程式門檻。
+- 在同一次裝夾、同一紙面標記取得全部五個接觸姿態（垂直、X+、Y−、X−、Y+）。確認 `calibrations/pen_tip/latest.json` 的殘差及姿態多樣性通過程式門檻。
 - 記錄夾爪與相機的實測包覆尺寸，再檢視傾斜路徑預覽與 `housing_clearance` 事件。實際控制器軌跡、關節可達性與其他障礙物仍需現場確認。
 - 現場分別驗證 MovP 和 MovL 收到 Motion Stop 的效果，保留位姿與旗標紀錄。實體急停須可立即操作。
 

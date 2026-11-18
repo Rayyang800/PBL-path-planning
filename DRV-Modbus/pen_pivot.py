@@ -51,6 +51,51 @@ def solve_tip(recs):
     return x[:3], x[3:], float(np.sqrt(np.mean(res ** 2))), res.tolist(), sv.tolist()
 
 
+POSES = ("垂直", "X+", "Y−", "X−", "Y+")
+
+
+def inspect_points(recs):
+    """同一 run 的有效接觸。舊紀錄可能在讀不到 TCP 時記下 null。"""
+    points = []
+    labels = []
+    for rec in recs:
+        tcp = np.asarray(rec.get("tcp"), dtype=float)
+        if tcp.shape != (6,) or not np.all(np.isfinite(tcp)) or "tilt" not in rec:
+            continue
+        tilt = rec["tilt"]
+        if tilt is None:
+            name = "垂直"
+        else:
+            axis, angle = tilt
+            if axis not in ([1, 0, 0], [0, 1, 0]) or not np.isfinite(angle) or angle == 0:
+                continue
+            name = ("X" if axis[0] else "Y") + ("+" if angle > 0 else "−")
+        labels.append(name)
+        points.append(rec)
+    missing = [name for name in POSES if name not in labels]
+    report = {"count": len(points), "missing": missing, "fit_ok": False}
+    if missing:
+        return report
+    p, X, rms, res, sv = solve_tip(points)
+    report.update(p_tool_mm=p.tolist(), X_robot=X.tolist(), rms_mm=rms, res_mm=res,
+                  singular_values=sv, fit_ok=rms < 2.0 and min(sv) > 0.1)
+    return report
+
+
+def check_reference(report, reference):
+    """以獨立量得的基準點（機器人基座座標 mm）評估新接觸，不加入擬合。"""
+    target = np.asarray(reference["target_robot_mm"], dtype=float)
+    poses = np.asarray(reference["tcp_poses"], dtype=float)
+    if target.shape not in ((2,), (3,)) or not np.isfinite(target).all():
+        raise ValueError("target_robot_mm 需為有限的 XY 或 XYZ")
+    if poses.ndim != 2 or poses.shape[1] != 6 or not len(poses) or not np.isfinite(poses).all():
+        raise ValueError("tcp_poses 需有至少一組實測的六維 TCP 位姿")
+    predicted = [pose[:3] + stl.R_tool(pose[3:], CONV) @ report["p_tool_mm"] for pose in poses]
+    errors = np.linalg.norm(np.asarray(predicted)[:, :len(target)] - target, axis=1)
+    return {"space": "XY" if len(target) == 2 else "XYZ", "errors_mm": errors.tolist(),
+            "max_mm": float(errors.max()), "rms_mm": float(np.sqrt(np.mean(errors ** 2)))}
+
+
 def read_pose(c, tries=3):
     """讀 TCP;連線閒置 (等人工輸入超過 ~20 秒) 被手臂端關掉時自動重連再讀。11-18:按 c 後讀不到位置而當掉。"""
     from drv_modbus import request
@@ -74,7 +119,10 @@ def load_tip():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--go", action="store_true")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--go", action="store_true")
+    mode.add_argument("--check-run", metavar="RUN", help="離線檢查單次校正 run 的 events.jsonl")
+    ap.add_argument("--reference", metavar="JSON", help="另一次對點的獨立量測，搭配 --check-run")
     ap.add_argument("--at", type=float, nargs=2, default=[148.0, 185.0],
                     help="紙面上點點的位置 (mm),要是空白處。預設在下方兩個 tag 中間 (離手臂基座近,11-18 在 (148,35) 往外伸碰到奇異點)")
     ap.add_argument("--tilt", type=float, default=12.0,
@@ -88,6 +136,17 @@ def main():
     ap.add_argument("--speed", type=int, default=10)
     ap.add_argument("--label", default="")
     args = ap.parse_args()
+    if args.reference and not args.check_run:
+        ap.error("--reference 需搭配 --check-run")
+    if args.check_run:
+        with open(os.path.join(args.check_run, "events.jsonl"), encoding="utf-8") as f:
+            events = (json.loads(line) for line in f if line.strip())
+            report = inspect_points(e for e in events if e.get("type") == "pivot_point")
+        if args.reference and report["fit_ok"]:
+            with open(args.reference, encoding="utf-8") as f:
+                report["reference"] = check_reference(report, json.load(f))
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["fit_ok"] else 1
     if not 5 <= args.tilt <= 35:
         sys.exit("--tilt 需在 5~35 度")
 
@@ -125,6 +184,8 @@ def main():
         arm = Arm(c, log, home[3:], args.speed)
         recs = []
         z_up = z_touch + 30.0
+        z_rot = z_touch + args.rot_height
+        completed = False
         try:
             print("\n注意:轉動時筆尖會掃過約 ±9 cm 的範圍。請先把工作區的其他物件 (例如罐頭) 移開,"
                   "或確認點點位置附近 15 cm 內沒有東西。")
@@ -144,7 +205,8 @@ def main():
             z_rot = zc + args.rot_height
             arm.move(x, y, z_rot)
             # 順序:11-18 實測繞 y 軸 +20° 要往外伸 ~9 cm,手臂走不到 -> 排最後;先取 x+、y- 以取得兩個不同轉軸
-            for axis, sgn in (([1, 0, 0], 1), ([0, 1, 0], -1), ([1, 0, 0], -1), ([0, 1, 0], 1)):
+            for i, (axis, sgn) in enumerate((([1, 0, 0], 1), ([0, 1, 0], -1), ([1, 0, 0], -1), ([0, 1, 0], 1)), 1):
+                print(f"接下來取樣 {POSES[i]}，已取得 {len(recs)}/5 個接觸姿態")
                 Ri = stl.tilt_base(axis, sgn * args.tilt) @ R0
                 ori = stl.angles_of(Ri, CONV, near=home[3:])
                 T_pred = X_est - Ri @ p_est
@@ -184,37 +246,39 @@ def main():
                     p_est, X_est = p_fit, X_fit
                     print(f"  目前估計:筆尖在工具座標 {np.round(p_est, 1).tolist()} mm,殘差 {rms:.2f} mm")
             arm.move(*home[:3], ori=home[3:])
+            completed = True
         except (Paused, KeyboardInterrupt, ConnectionError, send.CommandIgnored, TimeoutError) as e:
             print("校正已中斷，請現場確認姿態與手臂狀態:", e)
         except Quit as e:
             print("\n停止:", e, "-> 抬起回 home")
             try:
                 p_ = read_pose(c)
-                arm.move(p_[0], p_[1], p_[2] + args.rot_height, ori=list(p_[3:]))     # 維持姿態抬高,再轉回垂直
-                arm.move(p_[0], p_[1], p_[2] + args.rot_height, ori=home[3:])
+                recovery_z = max(p_[2], z_rot)
+                arm.move(p_[0], p_[1], recovery_z, ori=list(p_[3:]))
+                arm.move(p_[0], p_[1], recovery_z, ori=home[3:])
                 arm.move(*home[:3], ori=home[3:])
             except Exception:                  # noqa: BLE001
                 print("回 home 沒完成,請用回 home 任務")
         c.close()
-        if len(recs) < 3:
-            log.finish("aborted", {"points": len(recs)})
-            print("點數不夠 (需要垂直 + 至少兩個不同軸的傾斜),沒有存校正")
+        report = inspect_points(recs)
+        log.save_json("pivot_fit", report)
+        if not completed or report["missing"]:
+            print("校正未完成；缺少姿態：", "、".join(report["missing"]) or "無，流程已中斷")
+            log.finish("aborted", report)
             return
-        p_est, X_est, rms, res, sv = solve_tip(recs)
-        print(f"\n筆尖在工具座標 {np.round(p_est, 2).tolist()} mm (長 {np.linalg.norm(p_est):.1f} mm);"
-              f"各姿態殘差 {np.round(res, 2).tolist()} mm,RMS {rms:.2f} mm;奇異值 {np.round(sv, 2).tolist()}")
-        data = {"p_tool_mm": p_est.tolist(), "conv": CONV, "rms_mm": rms, "res_mm": res, "n": len(recs),
-                "tilt_deg": args.tilt, "points": recs, "X_robot": X_est.tolist()}
+        print(f"各姿態殘差 {np.round(report['res_mm'], 2).tolist()} mm，"
+              f"RMS {report['rms_mm']:.2f} mm，最小奇異值 {min(report['singular_values']):.3f}")
+        if not report["fit_ok"]:
+            print("未通過擬合門檻，請檢查各姿態的接觸紀錄")
+            log.finish("failed", report)
+            return
+        data = dict(report, conv=CONV, n=len(recs), tilt_deg=args.tilt, points=recs)
         log.save_json("pen_tip", data)
-        if rms < 2.0 and min(sv) > 0.1:
-            CalibrationStore().save("pen_tip", data, source_run=log.path, notes="pen_pivot.py")
-            print("已存 calibrations/pen_tip (傾斜描繪會用)")
-            log.finish("ok", {"p_tool_mm": p_est.tolist(), "rms_mm": rms})
-        else:
-            print("殘差太大或姿態不夠多樣,沒有存;請重做 (對準時看清楚點的中心)")
-            log.finish("failed", {"rms_mm": rms})
+        CalibrationStore().save("pen_tip", data, source_run=log.path, notes="五姿態擬合；獨立對點另測")
+        log.finish("ok", report)
+        print("已存五姿態擬合結果。請使用另一個已知點量測實際定位誤差。")
         print("紀錄:", log.path)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

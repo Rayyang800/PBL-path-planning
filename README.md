@@ -13,6 +13,12 @@
 接手時另向組員取得 `DRV-Modbus/runs/`、`DRV-Modbus/webui/job_config.json` 與台達 Modbus 位址表。程式狀態與現場驗收項目見 [專案規格 §7、§11](PROJECT_SPEC.md)。
 
 
+### 筆尖校正與獨立對點
+
+在同一次裝夾、同一標記收齊垂直、X+、Y−、X−、Y+ 的接觸。正常結束且 RMS < 2 mm、最小奇異值 > 0.1，程式才更新有效校正。每次 run 可在 `DRV-Modbus` 目錄執行 `python pen_pivot.py --check-run runs/<run目錄>` 重算，缺少的方向會列在 `missing`。這個離線指令只讀紀錄，各次 run 分開計算。
+
+獨立驗收使用同次裝夾的另一個已知標記。由外部量測取得標記在手臂基座座標的 XY 或 XYZ（mm），另外記錄垂直與傾斜筆尖碰到該標記時的六維 TCP 位姿（mm、度）。將基準點陣列存為 JSON 欄位 `target_robot_mm`，將位姿陣列的清單存為 `tcp_poses`，執行 `python pen_pivot.py --check-run runs/<run目錄> --reference reference.json`。輸出包含每次定位誤差、最大值及 RMS。XY 量測僅能評估平面定位。依工件需求判定可接受誤差，擬合通過與獨立定位驗收須分別記錄。
+
 ## 環境安裝 (Windows)
 
 ```bash
