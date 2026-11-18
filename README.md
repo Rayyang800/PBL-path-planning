@@ -15,6 +15,13 @@
 
 ### 筆尖校正與獨立對點
 
+**組員接手順序**
+
+1. 首次下載請執行 `git clone https://github.com/Rayyang800/PBL-path-planning.git`。已有專案的組員可在工作目錄乾淨時執行 `git switch main` 和 `git pull --ff-only origin main`。
+2. 完成下方環境安裝後，在 `DRV-Modbus` 目錄執行 `python tests/test_pen_pivot.py` 和 `python tests/test_stop.py`。兩項都能離線執行，分別檢查筆尖解算與停止指令的寫入值。
+3. 現場下一項工作是取得本次裝夾的五姿態筆尖校正。確認手臂在 home、旗標為 1、校正紙周圍淨空後，從控制台開啟「筆尖 3D 校正」或執行 `python pen_pivot.py --go`。依提示對準同一紙點，每次筆尖剛好接觸時按 `c`。若中斷，保留該次 run 供分析，下一輪重新收齊五個姿態。
+4. 成功後確認 `calibrations/pen_tip/latest.json` 已更新，再依下方方法驗證另一個已知點。交接當下仍待完成獨立對點、夾爪與相機尺寸量測，以及 MovP／MovL 的實機停止驗證。
+
 在同一次裝夾、同一標記收齊垂直、X+、Y−、X−、Y+ 的接觸。正常結束且 RMS < 2 mm、最小奇異值 > 0.1，程式才更新有效校正。每次 run 可在 `DRV-Modbus` 目錄執行 `python pen_pivot.py --check-run runs/<run目錄>` 重算，缺少的方向會列在 `missing`。這個離線指令只讀紀錄，各次 run 分開計算。
 
 獨立驗收使用同次裝夾的另一個已知標記。由外部量測取得標記在手臂基座座標的 XY 或 XYZ（mm），另外記錄垂直與傾斜筆尖碰到該標記時的六維 TCP 位姿（mm、度）。將基準點陣列存為 JSON 欄位 `target_robot_mm`，將位姿陣列的清單存為 `tcp_poses`，執行 `python pen_pivot.py --check-run runs/<run目錄> --reference reference.json`。輸出包含每次定位誤差、最大值及 RMS。XY 量測僅能評估平面定位。依工件需求判定可接受誤差，擬合通過與獨立定位驗收須分別記錄。
