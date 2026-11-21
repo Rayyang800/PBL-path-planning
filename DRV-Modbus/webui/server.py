@@ -12,7 +12,7 @@
   - 相機同時只能給一支程式用:啟動會用相機的任務前,伺服器先釋放相機,任務結束後自動接回。
   - 任務在「新的主控台視窗」執行 (校正要用鍵盤:Enter / c / 空白 / Ctrl+C / o / g),結束後按任意鍵關閉視窗。
   - 手臂狀態唯讀輪詢 (0.5 s);任務執行中暫停輪詢,避免兩條 Modbus 連線互相干擾。
-  - 網頁上的「送停止」寫 0x0300 = 1000 [對 MovP/MovL 是否有效未驗證],實體急停才是可靠的停止方式。
+  - 網頁上的「送停止」寫 0x0300 = 0 [對 MovP/MovL 是否有效未驗證],實體急停才是可靠的停止方式。
   - 伺服器本身的動作 (啟動任務、夾爪、停止、快照) 都記在 runs/<時間>_webui/ (§0.4)。
 """
 import argparse
@@ -49,10 +49,10 @@ DEFAULT_CONFIG = {
     "sheet": {"cols": 3, "rows": 3, "margin": 12.0, "stroke": 4.0, "hop": 5.0, "press": 0.0, "touch_all": False,
               "no_refine": False},
     "quick": {"step": 10.0, "hop": 3.0, "press": 0.0, "start_x": None, "start_y": None},
-    "seam": {"board_h": 5.0, "step_mm": 2.0, "approach": 3.0, "press": 0.0, "reverse": False, "source": "auto", "look_dz": 150.0},
+    "seam": {"board_h": 0.0, "step_mm": 2.0, "approach": 3.0, "press": 0.0, "reverse": False, "source": "auto", "look_dz": 150.0},
     "verify": {"target": "auto", "radius": 8.0, "dz": 0.0},
     "circle": {"views": 1, "inset": 2.5, "approach": 5.0, "press": 0.0, "step_mm": 8.0, "cw": False, "tilt_deg": 0.0, "gripper_reach": None, "camera_reach": None},
-    "pivot": {"tilt": 12.0, "guess_len": 260.0, "approach": 40.0},
+    "pivot": {"tilt": 12.0, "guess_len": 260.0, "approach": 40.0, "pen_len": 0.0},
     "ridge": {"views": 5, "approach": 5.0, "press": 0.0, "step_mm": 2.0, "end_margin": 8.0, "reverse": False, "segmented": False},
     "scan": {"cam_h": 380.0, "radius": 60.0, "n_ring": 8, "clearance": 40.0, "obj_h": 0.0,
              "tilts": "25,40", "n_tilt": 10, "view_dist": 290.0},
@@ -518,6 +518,11 @@ def task_registry(cfg):
                                           "--guess-len", str(cfg.get("pivot", {}).get("guess_len", 260.0)),
                                           "--approach", str(cfg.get("pivot", {}).get("approach", 40.0)),
                                           "--speed", str(min(15, int(cm.get("speed", 10))))] + (["--go"] if m == "go" else [])},
+        "pen_tip_twin": {"label": "筆尖 3D (分身算法,不動手臂)", "script": "pen_tip_twin.py", "uses_camera": False,
+                         "moves": False,
+                         "build": lambda m: ((["--pen-len", str(cfg.get("pivot", {}).get("pen_len"))]
+                                              if cfg.get("pivot", {}).get("pen_len") else [])
+                                             + (["--save"] if m == "go" else []))},
         "ridge_check": {"label": "脊線描繪回饋分析 (最新一次)", "script": "ridge_check.py", "uses_camera": False, "moves": False,
                         "build": lambda m: ["--latest"]},
         "scan3d": {"label": "多視角立體重建 (不下筆)", "script": "scan3d.py", "uses_camera": True, "moves": True,
@@ -803,7 +808,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/robot/stop":
                 from drv_modbus import send
                 App.robw.with_client(send.Stop)          # run_log.current() = 伺服器紀錄 -> 自動寫 cmd_stop
-                return self._send(200, {"ok": True, "note": "已寫 0x0300=1000 (未驗證是否能停止移動中的手臂,請以實體急停為主)"})
+                return self._send(200, {"ok": True, "note": "已寫 0x0300=0 (未驗證是否能停止移動中的手臂,請以實體急停為主)"})
             if u.path == "/api/gripper":
                 if App.tasks.status()["running"]:
                     raise RuntimeError("任務執行中,請在任務視窗用 o / g 控制夾爪")

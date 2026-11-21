@@ -286,16 +286,12 @@ class Arm:
         p1 = request.Get_TCP_Pose(self.c)
         time.sleep(0.6)
         p2 = request.Get_TCP_Pose(self.c)
-        if p1 is None or p2 is None:
-            self.log.event("stop", reason=why, pose=p2, still_moving=None)
-            raise RuntimeError("無法讀回停止後的位姿，請現場確認手臂")
-        moving = any(abs(a - b) > 0.5 for a, b in zip(p1, p2))
+        moving = p1 is not None and p2 is not None and send._pos_dist(p1, p2) > 0.5
         self.log.event("stop", reason=why, pose=p2, still_moving=moving)
         if moving:
-            raise RuntimeError("停止指令後手臂仍在移動，請立刻按實體急停")
-        if request.Get_Pose_Flag(self.c) != 1:
-            raise RuntimeError("停止後控制器未回報到位，請現場確認")
-        print(f"\n[位姿穩定] 位置 {[round(v, 1) for v in p2[:3]]}")
+            print("\n!!! 停止指令後手臂仍在移動,請立刻按實體急停 !!!")
+        else:
+            print(f"\n[已停止] 位置 {[round(v, 1) for v in p2[:3]] if p2 else '?'}")
         return p2
 
     def move(self, x, y, z, mov=send.MovL, speed=None, ori=None):

@@ -13,11 +13,11 @@
 
 傾斜描繪 (--tilt-deg,例如 20):筆往圓心外倒 (筆身在外、筆尖朝內下壓),每一點姿態 = 垂直姿態繞該點圓切線轉 tilt。
   需要先做 pen_pivot.py (筆尖 3D 校正);TCP = 垂直時的 TCP + (R0 - R)·p。換姿態都在高處原地轉。
-  手臂走不到傾斜姿態時中止，保留現場姿態供確認。
+  手臂走不到某個傾斜姿態 (關節極限 / 奇異點) 就停止、抬起 (傾斜時抬到 home 高度) 轉回垂直、回 home。
 
   python circle_trace.py                 # dry-run:只用 home 一張找圓、出計畫圖 (circle_trace_plan.png),不動手臂
   python circle_trace.py --go            # 執行
-按鍵:Ctrl+C = 中止（傾斜時保留現場姿態）;移動中 空白/Esc/p = 選單 (r 繼續 / q 結束)
+按鍵:Ctrl+C = 停止 -> 抬起回 home;移動中 空白/Esc/p = 選單 (r 繼續 / q 結束)
 """
 import argparse
 import json
@@ -521,12 +521,14 @@ def main():
         except StopIteration:
             pass
         except (Quit, Paused, KeyboardInterrupt) as e:
-            print("\n停止:", e)
+            print("\n停止:", e, "-> 垂直抬起回 home")
             status, res = "aborted", {"reason": str(e)}
             try:
-                if not args.go or args.tilt_deg > 0:
-                    raise Paused("中止傾斜任務，需現場確認姿態")
-                arm.lift_to(min(float(home[2]), z_touch + obj_plan["h_max"] + args.clearance))
+                if not args.go:
+                    raise Paused("dry-run 沒有移動手臂")
+                # 傾斜時:先維持姿態抬到 home 高度再轉回垂直 (11-18:轉回垂直時筆尖會往下掉約 38 mm)
+                arm.lift_to(float(home[2]) if args.tilt_deg > 0
+                            else min(float(home[2]), z_touch + obj_plan["h_max"] + args.clearance))
                 pcur = __import__("pen_pivot").read_pose(c)
                 arm.move(pcur[0], pcur[1], pcur[2], ori=home[3:])        # 先轉回垂直 (傾斜時)
                 arm.move(*home[:3], ori=home[3:])

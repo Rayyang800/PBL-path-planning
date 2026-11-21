@@ -7,8 +7,11 @@
      -> 深度估板厚 (板子內部 - 周圍一圈紙;也可 --board-h 手動指定) -> 用筆尖校正 (calibrations/pen_paper) 換成手臂路徑
   1. 移到縫起點上方安全高度 -> 自動降到「估計板面 + approach」(預設 3 mm)
   2. 人工確認接觸:每步 0.5 mm 往下,剛好畫得出來按 c (可 x/y 微調;微調量會套用到整條路徑)
-  3. 固定這個高度,MovL 沿縫畫到終點 -> 抬起 -> 回 home 拍照
+  3. 固定這個高度,一次 MovL 從起點畫到終點 (縫是直線,和工件 A 脊線一樣;--segmented = 每 --step-mm 停一次的舊做法)
+     -> 抬起 -> 回 home 拍照
   4. 比對前後照片:畫出的筆跡離縫多遠 (平均/最大 mm、涵蓋率)。黑板上看不清楚時會提示目視確認
+  5. 筆跡回饋:量到的整體側向偏移記到 calibrations/pen_xy_offset (pen_offset.py,和 A 脊線 / C 罐頭共用),
+     下次規劃路徑時自動扣掉 (--no-pen-offset 關閉)
 
   python seam_trace.py                   # dry-run:找縫、估板厚、印路徑,存 seam_trace_plan.png 與紀錄
   python seam_trace.py --go              # 執行
@@ -28,6 +31,7 @@ from pymodbus.client import ModbusTcpClient
 
 import depth_height
 import pen_marks
+import pen_offset
 import seam_boards
 import warp_pick as wp
 from drv_modbus import send, request
@@ -185,7 +189,11 @@ def plan_from(color, snap, info, pf, args, A, tcal, z_paper, close=False):
                    length_mm=float(np.linalg.norm(seam[-1] - seam[0])))
     if args.reverse:
         seam = seam[::-1]
-    path = seam @ A.T + tcal
+    # 筆跡回饋學到的筆尖水平偏移 (紙面 mm):路徑先減掉,筆跡就落在縫上 (同 ridge_trace)
+    o_pen, o_note, _ = (np.zeros(2), "已關閉", 0) if args.no_pen_offset else pen_offset.learned()
+    if np.any(o_pen != 0) and not close:
+        print(f"筆尖偏移修正 ({o_note}):路徑移 ({-o_pen[0]:+.2f}, {-o_pen[1]:+.2f}) mm")
+    path = (seam - o_pen) @ A.T + tcal
     z_est = z_paper + board_h
     view = seam_boards.overlay(color, pf, res)
     if dres and dres.get("ok"):
@@ -198,7 +206,7 @@ def plan_from(color, snap, info, pf, args, A, tcal, z_paper, close=False):
     print(f"紙面接觸高度 {z_paper:.2f} + 板厚 = 估計板面 {z_est:.2f};自動降到 {z_est + approach:.2f} 後人工確認"
           f";高度下限 {z_floor:.2f}" + ("" if close else "。預覽: seam_trace_plan.png (綠圈 = 起點)"))
     return {"board_h": board_h, "approach": approach, "z_floor": z_floor, "res": res, "dres": dres, "seam": seam,
-            "path": path, "z_est": z_est, "view": view, "est": est, "seam_msg": seam_msg}
+            "path": path, "z_est": z_est, "view": view, "est": est, "seam_msg": seam_msg, "o_pen": o_pen, "o_note": o_note}
 
 
 def main():
@@ -209,6 +217,9 @@ def main():
     ap.add_argument("--press", type=float, default=0.0, help="接觸高度再往下壓幾 mm 畫線")
     ap.add_argument("--step-mm", type=float, default=2.0, help="路徑點間距 (mm)")
     ap.add_argument("--reverse", action="store_true", help="從縫的另一端開始")
+    ap.add_argument("--segmented", action="store_true",
+                    help="逐點描繪 (每 --step-mm 停一次,舊做法);預設連續:直線縫一次 MovL 畫完")
+    ap.add_argument("--no-pen-offset", action="store_true", help="不套用筆跡回饋學到的筆尖偏移")
     ap.add_argument("--look-dz", type=float, default=150.0,
                     help="--go 時先從 home 垂直下降多少 mm 近距離重新量測 (板厚、縫);0 = 不下降。dry-run 不會下降")
     ap.add_argument("--seam-source", choices=["auto", "color", "depth"], default="auto",
@@ -250,14 +261,16 @@ def main():
     if not pf.detect(color):
         sys.exit("校正紙: " + pf.describe())
     P = plan_from(color, snap, info, pf, args, A, tcal, z_paper, close=False)
-    board_h, approach, z_floor, res, dres, seam, path, z_est, view, est, seam_msg = (
-        P[k] for k in ("board_h", "approach", "z_floor", "res", "dres", "seam", "path", "z_est", "view", "est", "seam_msg"))
+    board_h, approach, z_floor, res, dres, seam, path, z_est, view, est, seam_msg, o_pen = (
+        P[k] for k in ("board_h", "approach", "z_floor", "res", "dres", "seam", "path", "z_est", "view", "est", "seam_msg",
+                       "o_pen"))
     cv2.imencode(".png", view)[1].tofile(os.path.join(HERE, "seam_trace_plan.png"))
 
     plan = {"seam_paper_mm": seam.tolist(), "path_robot": path.tolist(), "board_h": board_h, "board_h_source":
             "manual" if args.board_h is not None else "depth", "depth_estimate": est, "z_paper": z_paper, "z_est": z_est,
             "seam_mode": res.get("mode", "gap"), "touching": res.get("touching"), "seam_source": args.seam_source,
-            "seam_choice": seam_msg, "depth_seam": ({k: v for k, v in dres.items() if k != "seam_paper_mm"} if dres else None), "calibration":
+            "seam_choice": seam_msg, "pen_offset_applied": np.asarray(o_pen).tolist(), "pen_offset_note": P["o_note"],
+            "continuous": not args.segmented, "depth_seam": ({k: v for k, v in dres.items() if k != "seam_paper_mm"} if dres else None), "calibration":
             {"created": cal["created"], "source_run": cal.get("source_run"), "method": cal["data"].get("method")},
             "layout": os.path.basename(args.layout)}
     if not args.go:
@@ -343,6 +356,27 @@ def main():
             if abs(z_c - z_est) > 2.5:
                 print(f"  注意:實際接觸高度 {z_c:.2f} 和估計板面 {z_est:.2f} 差 {z_c - z_est:+.2f} mm")
             k = 1
+            if not args.segmented:
+                # 連續描繪:縫是直線,一次 MovL 從起點走到終點,路徑和逐點相同,只是中間不停 (同 ridge_trace)。
+                end = [float(path[-1][0]), float(path[-1][1]), z_draw]
+                t0 = time.time()
+                while True:
+                    try:
+                        arm.move(*end)
+                        break
+                    except Paused as e:
+                        if str(e) == "ctrl_c":
+                            raise
+                        ch = ""
+                        while ch not in ("r", "q"):
+                            ch = ask("暫停:r = 從目前位置繼續畫到終點 / q = 抬起回 home > ").strip().lower()
+                        if ch == "q":
+                            raise Quit("使用者結束")
+                done = k = len(path) - 1
+                k += 1
+                L = float(np.linalg.norm(np.asarray(end[:2]) - np.asarray(path[0])))
+                log.event("continuous_trace", seconds=round(time.time() - t0, 2), length_mm=L)
+                print(f"  連續描繪完成:{L:.0f} mm,{time.time() - t0:.1f} 秒")
             while k < len(path):
                 try:
                     arm.move(float(path[k][0]), float(path[k][1]), z_draw)
@@ -391,6 +425,13 @@ def main():
             cv2.polylines(view2, [np.int32(pf2.paper_to_pix(seam, board_h))], False, (0, 120, 255), 1)
         log.save_image("trace_overlay.jpg", view2)
         print("\n" + summarize(r))
+        # 筆跡回饋:縫法向的整體偏移 -> 記錄,下次自動修正 (涵蓋率夠才信)
+        if r.get("ok") and r.get("coverage", 0) >= 0.6 and np.isfinite(r.get("offset_mm", np.nan)):
+            S_ = np.asarray(seam, float)
+            u_ = (S_[-1] - S_[0]) / max(np.linalg.norm(S_[-1] - S_[0]), 1e-9)
+            if pen_offset.record([[-u_[1], u_[0]]], [r["offset_mm"]], o_pen, "seam", run=log.path,
+                                 extra={"coverage": r["coverage"]}):
+                print(f"  回饋:筆跡整體偏 {r['offset_mm']:+.2f} mm 已記錄,下次自動修正筆尖偏移")
         log.finish("ok", {"points_done": done, **{k: r.get(k) for k in ("ok", "mean_dev_mm", "p90_dev_mm", "offset_mm",
                                                                         "coverage", "reason")}})
         print("紀錄:", log.path)

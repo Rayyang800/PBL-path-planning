@@ -194,7 +194,7 @@
 |---|---|---|---|
 | `0x00F0`(12 個) | 讀 | TCP 位姿 x,y,z,rx,ry,rz(各 int32 ×0.001 → mm/度) | [已驗證] |
 | `0x031F`(1 個) | 讀 | **到位旗標**:`1` = 閒置/已到位;`2` = 忙碌**或異常卡住** | [已驗證](卡 2 的情況見 §8) |
-| `0x0300` | 寫 | 指令碼:`301` = MovP、`302` = MovL、`601~612` = Jog、`0` = 結束連續 Jog、`1000` = Motion Stop。送出後控制器會把它清回 0 | 301、302 [已驗證](11-04 pen_calibrate 的 MovL 步進有動);Jog [未驗證];**`1000` 已對照台達位址表，MovP/MovL 停止效果待實機確認** |
+| `0x0300` | 寫 | 指令碼:`301` = MovP、`302` = MovL、`601~612` = Jog、`0` = 結束連續 Jog、`1000` = Motion Stop。送出後控制器會把它清回 0 | 301、302 [已驗證](11-04 pen_calibrate 的 MovL 步進有動);Jog [未驗證];**程式寫 `0`(不是手冊的 `1000`);11-21 團隊決定不做中斷指令,Ctrl+C 一律抬起回 home** |
 | `0x0324` | 寫 | 速度(以 1~50 使用;確切單位 `[假設]` 為百分比) | [已驗證可寫入並讀回] |
 | `0x0330`(12 個) | 寫 | 目標位姿(同 TCP 格式),先寫目標、再寫速度、最後寫 `0x0300` 指令碼 | [已驗證] |
 | `0x02FE` | 寫 | DO 輸出位元遮罩(見 §4.3) | [已驗證] |
@@ -265,7 +265,7 @@
 
 | 檔案 | 內容 | 備註 |
 |---|---|---|
-| `drv_modbus/send.py` | `Go_Position(c,x,y,z,rx,ry,rz,speed=20,mov=MovP,block=True,timeout=120,start_timeout=2,arrive_tol=1,on_poll=None)`、`Stop(c)`、`Suction_ON/OFF`、`Jog_*`;例外 `CommandIgnored`、`Interrupted` | **本地修改**:逾時、開始/到位檢查(§5);`on_poll()` 回傳 True 或 Ctrl+C → 寫 `0x0300=1000` 並丟 `Interrupted("key"/"ctrl_c")`。舊腳本 `except TimeoutError` 會接到 `CommandIgnored`,但**不會**接到 `Interrupted`(會印 traceback,停止指令已送出) |
+| `drv_modbus/send.py` | `Go_Position(c,x,y,z,rx,ry,rz,speed=20,mov=MovP,block=True,timeout=120,start_timeout=2,arrive_tol=1,on_poll=None)`、`Stop(c)`、`Suction_ON/OFF`、`Jog_*`;例外 `CommandIgnored`、`Interrupted` | **本地修改**:逾時、開始/到位檢查(§5);`on_poll()` 回傳 True 或 Ctrl+C → 寫 `0x0300=0` 並丟 `Interrupted("key"/"ctrl_c")`。舊腳本 `except TimeoutError` 會接到 `CommandIgnored`,但**不會**接到 `Interrupted`(會印 traceback,停止指令已送出) |
 | `drv_modbus/request.py` | `Get_TCP_Pose(c)` → `(x,y,z,rx,ry,rz)`、`Get_Pose_Flag(c)` | 上游原檔;讀取失敗回傳 `None` 並印 `request error!` |
 | `drv_modbus/gripper.py`(新) | `Gripper_Open(c)`、`Gripper_Close(c)`(寫 `0x02FE` = 64/128,sleep 1 秒) | 見 §4.3 |
 | `drv_modbus/conn.py`(新) | `refresh(c)`:關閉並重連 | 任何「等待使用者/長時間思考」之後、讀寫之前都要呼叫 |
@@ -284,7 +284,7 @@
 | `paper_layout_capture.py` | 從相機(或 `--image`)量實際校正紙的 tag 排列與方向 → `print/lab_sheet_layout.json`;`--tag-mm` 必填,`--dx/--dy` 可填尺量間距(否則 PnP 估) | 否 | [已驗證] 11-04 實拍:角點擬合殘差 0.19 mm |
 | `pen_calibrate.py` | 筆尖探觸校正(D7、D11)。預設 dry-run(存 `pen_calibrate_plan.png`)。`--go` 流程:移到第一點上方 → (可選)開夾爪裝筆、倒數 3 秒夾緊 → 每點找接觸高度 → 畫大十字(半長 10 mm)→ 全部完成回 home 拍照 → `pen_marks.analyze` → 存 `calibrations/pen_paper/`。點位 `--pattern cross`(預設,紙中心上右下左各偏 `--step` 20 mm)/ `left` / `spread`,`--shift-x/y`;只允許在 tag 內緣再縮 12 mm 的範圍內。探觸 `--probe auto`(預設)/`manual`;`--look base`(預設)/`lift`/`home`;`--probe-step 3`、`--auto-max 8`、`--base-lift 10`、`--base-tags 1 2`、`--ink any`。`--resume <run>` 接續中斷的紀錄(用先前墨點修正偏移)。**按鍵**:Ctrl+C = 停止→垂直抬起→回 home 結束;空白/Esc/p = 停止並選單(r 重做、m 改人工、s 跳過、h 回 home、q 結束、o/g 夾爪);移動中 `o`/`g` 即時開夾夾爪(手臂不停) | `--go` 才動 | 部分實機:MovL 步進、裝筆、人工下降 [已驗證];自動探觸 `look=lift/home` 跑過但**未成功**(§8 #14、#15);`look=base`、停止鍵、選單、完整分析 **[未驗證]** |
 | `pen_quick_calib.py` | **快速筆尖校正(D13,主要流程)**。dry-run 存 `pen_quick_plan.png`。`--go`:home 拍前照 → 第一點上方 → (可選)裝筆 → 人工下降(`x 2`/`y -3` 微調,最多 5 mm、會先抬 2 mm)按 `c` 記 `z_touch` → 其餘 4 點:抬 `--hop` 3 mm、移 `--step` 10 mm、下到 `z_touch - --press`(預設 0)停 `--dwell` 0.5 s → 抬到安全高度回 home 拍後照 → `analyze()`:前後相減(變暗量加權中心)、`match_pattern` 依粗略方向配對、`fit_rigid`(可鏡像)、與舊 ArUco 旋轉交叉檢查(>5° 警告)、估計離第一點 100 mm 的誤差 → 存 `calibrations/pen_paper/`(`method: quick`)。`--start-paper X Y` 第一點紙面座標;`--surface-h` 點在工件上時填工件厚度(視差);`--analyze runs\<id>` 重新分析。按鍵:Ctrl+C / 找第一點時的空白鍵 → 抬起回 home 結束;後 4 點中空白鍵 → r 重做 / s 跳過 / h 回 home 用已完成點分析 / q 結束 | `--go` 才動 | 合成測試 PASS(`tests/test_quick_calib.py`:5 點全對,72 mm 外誤差 ≤0.1 mm);**實機未跑(連 dry-run 都還沒,11-05 手臂離線)** |
-| `webui/server.py` + `webui/static/` | **本機 Web 控制台**(`python webui\server.py` → http://127.0.0.1:8080,只聽本機;純標準函式庫,不連外部 CDN)。即時 RealSense MJPEG(彩色 + 疊圖:5x5 ArUco、36h11 tag、紙面 50 mm 格線與座標軸、可畫範圍;深度;相對紙面的高度圖)、手臂唯讀狀態(0.5 s,任務中暫停)、最新 `pen_paper` / `warp_plane` 校正摘要、工件與任務設定(存 `webui/job_config.json`,啟動時轉成參數)、任務啟動(新主控台視窗執行,鍵盤互動與安全鍵照舊;用相機的任務先釋放相機、結束自動接回;`--go` 先確認並顯示完整指令)、執行紀錄瀏覽(影像、分析結果、console.log)、存快照(彩色+15 幀深度 → `runs/*_web_snapshot`)、夾爪開/夾、送停止(0x0300=1000,未驗證)。伺服器動作記在 `runs/*_webui`;被直接關掉的舊 session 下次啟動標記為 aborted。`--no-robot`、`--no-camera`、`--port` | 啟動任務會動 | 離線測試:API、設定、指令組合、路徑安全、頁面版面 [已驗證];**真實相機串流、手臂狀態、實際啟動任務未測**(11-10 設備離線) |
+| `webui/server.py` + `webui/static/` | **本機 Web 控制台**(`python webui\server.py` → http://127.0.0.1:8080,只聽本機;純標準函式庫,不連外部 CDN)。即時 RealSense MJPEG(彩色 + 疊圖:5x5 ArUco、36h11 tag、紙面 50 mm 格線與座標軸、可畫範圍;深度;相對紙面的高度圖)、手臂唯讀狀態(0.5 s,任務中暫停)、最新 `pen_paper` / `warp_plane` 校正摘要、工件與任務設定(存 `webui/job_config.json`,啟動時轉成參數)、任務啟動(新主控台視窗執行,鍵盤互動與安全鍵照舊;用相機的任務先釋放相機、結束自動接回;`--go` 先確認並顯示完整指令)、執行紀錄瀏覽(影像、分析結果、console.log)、存快照(彩色+15 幀深度 → `runs/*_web_snapshot`)、夾爪開/夾、送停止(0x0300=0,未驗證)。伺服器動作記在 `runs/*_webui`;被直接關掉的舊 session 下次啟動標記為 aborted。`--no-robot`、`--no-camera`、`--port` | 啟動任務會動 | 離線測試:API、設定、指令組合、路徑安全、頁面版面 [已驗證];**真實相機串流、手臂狀態、實際啟動任務未測**(11-10 設備離線) |
 | `pen_verify_circle.py` | **畫圓驗證**:home 找紙上十字 → 用 `pen_paper` 換手臂座標 → 繞它畫圓 (半徑 8 mm、24 段) → 回 home 量圓心誤差。11-10 實機:**圓心誤差 0.46 mm** (通過);圓周涵蓋 58% (紙不平) | `--go` 才動 | [已驗證] |
 | `seam_trace.py` | **沿縫描繪 (T16)**:home 拍照 →(`--go` 時)**垂直下降 `--look-dz` 150 mm 近距離重新量測** → 縫 = 影像縫為主、深度縫確認 (`--seam-source auto/color/depth`)→ 用 `pen_paper` 換路徑 → 降到「紙面 z_touch + 板厚 + approach」→ 人工 0.5 mm 步進按 `c` (未往下就按 c 會再確認)→ 固定高度 MovL 沿縫 → 回 home 量偏差 (筆跡變亮/變暗都算)。板厚用 `--board-h` (網頁設定),深度只做比對;高度下限 = 板面 −2 mm | `--go` 才動 | 部分實機:曾畫 13/23 點後中止;**11-10 發現深度估板厚出現負值時筆壓進板子 ~5 mm → 已改為深度不決定下筆高度**;近距離流程只做離線驗證 |
 | `depth_compare.py` / `depth_closeup.py` | 深度設定比較 (5 組) / 近距離量測 (home vs 下降 150 mm) | 前者否,後者會下降 | [已驗證] 見 §8 #20 |
@@ -353,7 +353,7 @@ python go_home.py --speed 10
 | 14 | 自動探觸「抬高拍照」看不到筆跡 | 相機裝在夾爪**前側**(+X 方向):手臂在紙上方時,相機視野在筆尖前方;抬 40/80 mm 拍到的是紙外的鋁軌,紙只在畫面下緣(`runs/20261104-195948_pen_calib/images/touch_0_hit.jpg`)。結果程式一路往下 9 mm | 改成 `--look base`(往基座方向移到看見 ArUco 1/2)或 `--look home`(慢但確定看得到整張紙) |
 | 15 | 自動探觸把**人的手**當成紅點 | 紅色 HSV 範圍包含膚色;當時 ROI 是整張畫面 | ROI 限制在紙上可點範圍 + 預定點 35 mm 內(home)、或排除畫面邊緣 30 px 並記住第一次的位置(base/lift);最小面積 12 px。**那次 run 的 z=468.8 是錯的,不要拿來 `--resume`** |
 | 16 | 只找紅色會漏掉筆跡 | 筆輕碰留下的是灰點,不是紅點(紅點反而是那次出錯時留下的) | `--ink any`:只看「變暗 > 25」;探觸改畫小十字(半長 4 mm)比點容易辨識 |
-| 17 | 原本 Ctrl+C 不會讓手臂停 | Ctrl+C 只中斷 Python,控制器會把已收到的移動走完 | `Go_Position` 中斷時寫 `0x0300=1000`,再讀兩次位置確認;**仍未實機驗證,實體急停是唯一可靠的停止方式** |
+| 17 | 原本 Ctrl+C 不會讓手臂停 | Ctrl+C 只中斷 Python,控制器會把已收到的移動走完 | `Go_Position` 中斷時寫 `0x0300=0`,再讀兩次位置確認;**仍未實機驗證,實體急停是唯一可靠的停止方式** |
 | 18 | D11 自動探觸實際使用的問題(使用者回報 11-05) | ① 慢:相機無法即時看筆尖,每步都要移動拍照;② 沒有力回饋,手臂一直往下壓,**白板筆尖常被壓壞**,點有粗有細;③ 點分散在紙上,常超出工件或快出 A4,塗到底下的紙 | 改用 D13 `pen_quick_calib.py`:只找一次高度、固定 z、點集中在 ±10 mm |
 | 20 | **深度量板厚:遠距低估、近距準** | home (相機離紙 ~520 mm) 把 5 mm 黑色泡棉量成 3.1 mm (重複性 ±0.05,是偏差不是雜訊);spatial/temporal 濾波、High Accuracy 會把高低差抹平 (2.0 / 0.6 mm);**下降 150 mm (~370 mm) 量到 4.89 ± 0.05 mm** | 深度 848×480、單位 0.1 mm (`rs_capture`)、不濾波;要用深度時先下降近距離 (`seam_trace --look-dz`);下筆高度仍以人工確認為準 |
 | 21 | 畫面裡其他紙上的同 ID tag 被當成校正紙的 tag | 左下一疊紙印著 36h11 ID 0,`PaperFrame` 原本取最後一個 → 單應殘差 97 mm,深度「相機到紙 18 mm」 | `paper_frame.detect` 改為窮舉同 ID 組合取殘差最小,殘差 > 3 mm 拒絕 |
@@ -517,7 +517,7 @@ python go_home.py --speed 10
   python pen_quick_calib.py --pen-loaded --start-paper <X> <Y> --surface-h <工件厚度>   # 第一點不在工件上時調整
   python pen_quick_calib.py --go --pen-loaded        # 人工下降,剛好點出顏色按 c,其餘自動
   ```
-  第一次跑時:手放急停旁;在後 4 點移動中按一次空白鍵,確認 `0x0300=1000` 真的能停(§8 #17)。
+  第一次跑時:手放急停旁;在後 4 點移動中按一次空白鍵,(停止指令不做,見 §8 #17)。
 - **護貝紙版(D14)**:`python pen_sheet_calib.py --pen-loaded`(dry-run)→ `python pen_sheet_calib.py --go --pen-loaded`。完成條件:9 點全找到、留一法最大 ≤ 1 mm。之後描繪腳本讀 `calibrations/pen_paper/latest.json`(看 `method`)。
 - **完成條件(quick)**:5 點都對應到、RMS ≤ 0.5 mm、與舊 ArUco 旋轉差 < 5°、`calibrations/pen_paper/latest.json`(`method: quick`)產生;之後 T16 用它把紙面縫合線轉成手臂 XY(並用同一個 `z_touch`)。
 - 注意:點集中在 ±10 mm,旋轉誤差會放大到遠處(程式會印「離第一點 100 mm 估計誤差」);要畫的範圍大時加大 `--step`(工件夠大的話)。

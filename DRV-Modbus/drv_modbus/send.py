@@ -29,10 +29,9 @@ def _log(type_, **data):
 
 
 def Stop(c):
-    """送停止指令 (0x0300 = 1000)。[未驗證] 對 MovP/MovL 是否有效;呼叫端應讀回位置確認。實體急停仍是最可靠的方式。"""
-    response = c.write_register(0x0300, 1000, 2)
-    if response is None or response.isError():
-        raise IOError(f"Motion Stop 寫入失敗: {response}")
+    """送停止指令 (0x0300 = 0)。[未驗證] 對 MovP/MovL 是否有效;呼叫端應讀回位置確認。實體急停仍是最可靠的方式。
+    11-21:團隊決定不做中斷指令 (Ctrl+C 走「抬起回 home」);不改成手冊的 1000。"""
+    c.write_register(0x0300, 0, 2)
     _log("cmd_stop")
 
 
