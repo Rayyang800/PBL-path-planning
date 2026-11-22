@@ -6,25 +6,22 @@
 - **簡報**:`PBL專題規劃報告.pptx`、`PBL專題規劃報告_三種工件版.pptx`
 - **程式**:[`DRV-Modbus/`](DRV-Modbus/),以 [liaochikon/DRV-Modbus](https://github.com/liaochikon/DRV-Modbus)(MIT License)為基礎擴充
 
-## 11 月 18 日交接進度
+## 目前進度與操作 (2026-11-22)
 
-直線脊線已支援連續描繪與前後影像偏差分析。工件 C 可用垂直筆描繪罐頭外圈，並從筆跡更新水平偏移。筆尖 3D 校正及傾斜描繪仍待現場驗收。傾斜前需有本次裝夾的有效 `pen_tip` 校正，並填入 TCP 到夾爪、相機最遠外緣的實測上界（mm）。Motion Stop 已依台達表更正，實機停止效果待確認。
+三種工件都從本機網頁操作:`cd DRV-Modbus`、`python webui\server.py`,網頁最上面有圖解。
 
-接手時另向組員取得 `DRV-Modbus/runs/`、`DRV-Modbus/webui/job_config.json` 與台達 Modbus 位址表。程式狀態與現場驗收項目見 [專案規格 §7、§11](PROJECT_SPEC.md)。
+| 工件 | 做法 | 狀態 |
+|---|---|---|
+| A 立體工件 | 沿脊線一次連續畫完、自動量偏差 | 已上機 (平均偏差 0.66~1.06 mm) |
+| B 兩板縫合 | 沿縫一次連續畫完、自動量偏差 | 逐點版已上機;連續版待上機 |
+| C 罐頭頂面 | 筆垂直,沿捲邊一圈 | 已上機 |
+| C 罐頭底面 | 筆傾斜 15 度,分身執行前檢查、先空走一圈 | **只有離線模擬,待上機** |
+| 圓周連續運動 | 控制器 RL MovL + PASS (`smooth_motion.py`) | **只有模擬控制器測試;控制器要先設定一次** |
 
-
-### 筆尖校正與獨立對點
-
-**組員接手順序**
-
-1. 首次下載請執行 `git clone https://github.com/Rayyang800/PBL-path-planning.git`。已有專案的組員可在工作目錄乾淨時執行 `git switch main` 和 `git pull --ff-only origin main`。
-2. 完成下方環境安裝後，在 `DRV-Modbus` 目錄執行 `python tests/test_pen_pivot.py` 和 `python tests/test_stop.py`。兩項都能離線執行，分別檢查筆尖解算與停止指令的寫入值。
-3. 現場下一項工作是取得本次裝夾的五姿態筆尖校正。確認手臂在 home、旗標為 1、校正紙周圍淨空後，從控制台開啟「筆尖 3D 校正」或執行 `python pen_pivot.py --go`。依提示對準同一紙點，每次筆尖剛好接觸時按 `c`。若中斷，保留該次 run 供分析，下一輪重新收齊五個姿態。
-4. 成功後確認 `calibrations/pen_tip/latest.json` 已更新，再依下方方法驗證另一個已知點。交接當下仍待完成獨立對點、夾爪與相機尺寸量測，以及 MovP／MovL 的實機停止驗證。
-
-在同一次裝夾、同一標記收齊垂直、X+、Y−、X−、Y+ 的接觸。正常結束且 RMS < 2 mm、最小奇異值 > 0.1，程式才更新有效校正。每次 run 可在 `DRV-Modbus` 目錄執行 `python pen_pivot.py --check-run runs/<run目錄>` 重算，缺少的方向會列在 `missing`。這個離線指令只讀紀錄，各次 run 分開計算。
-
-獨立驗收使用同次裝夾的另一個已知標記。由外部量測取得標記在手臂基座座標的 XY 或 XYZ（mm），另外記錄垂直與傾斜筆尖碰到該標記時的六維 TCP 位姿（mm、度）。將基準點陣列存為 JSON 欄位 `target_robot_mm`，將位姿陣列的清單存為 `tcp_poses`，執行 `python pen_pivot.py --check-run runs/<run目錄> --reference reference.json`。輸出包含每次定位誤差、最大值及 RMS。XY 量測僅能評估平面定位。依工件需求判定可接受誤差，擬合通過與獨立定位驗收須分別記錄。
+- 校正只需要護貝紙整張校正 (換筆、重夾、紙移動過才做)。筆尖 3D 位置由分身自動推算,不用傾斜碰點。
+- 一般停止:任務視窗 Ctrl+C,抬起回 home。緊急時按實體急停。程式不使用 Motion Stop 1000。
+- `runs/`、`webui/job_config.json` 與台達 Modbus 位址表不在 repo,請向組員取得。
+- 待辦見 [NEXT_STEPS.md](NEXT_STEPS.md)。
 
 ## 環境安裝 (Windows)
 

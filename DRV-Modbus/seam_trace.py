@@ -36,7 +36,7 @@ import seam_boards
 import warp_pick as wp
 from drv_modbus import send, request
 from paper_frame import PaperFrame
-from pen_calibrate import Arm, Paused, ask, grab, LAST_GRAB, LAYOUT, MAX_SPEED
+from pen_calibrate import Arm, MOVE_ERRORS, Paused, ask, grab, LAST_GRAB, LAYOUT, MAX_SPEED
 from pen_quick_calib import Quit, probe_with_nudge
 from run_log import RunLog, CalibrationStore
 
@@ -404,12 +404,12 @@ def main():
             log.event("trace_done", points=done, of=len(path) - 1)
             arm.lift_to(z_safe)
             arm.move(*home[:3], mov=send.MovP, ori=home[3:])
-        except (Quit, Paused, KeyboardInterrupt) as e:
+        except (Quit, Paused, KeyboardInterrupt) + MOVE_ERRORS as e:
             print("\n停止:", e, "-> 垂直抬起回 home")
             try:
                 arm.lift_to(z_safe)
                 arm.move(*home[:3], mov=send.MovP, ori=home[3:])
-            except (Paused, KeyboardInterrupt):
+            except (Paused, KeyboardInterrupt) + MOVE_ERRORS:
                 print("已停止,手臂停在目前位置 (之後用 python go_home.py)")
             log.finish("aborted", {"reason": str(e), "points_done": done})
             c.close()

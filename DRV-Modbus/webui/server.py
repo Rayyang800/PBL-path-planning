@@ -51,13 +51,14 @@ DEFAULT_CONFIG = {
     "quick": {"step": 10.0, "hop": 3.0, "press": 0.0, "start_x": None, "start_y": None},
     "seam": {"board_h": 0.0, "step_mm": 2.0, "approach": 3.0, "press": 0.0, "reverse": False, "source": "auto", "look_dz": 150.0},
     "verify": {"target": "auto", "radius": 8.0, "dz": 0.0},
-    "circle": {"views": 1, "inset": 2.5, "approach": 5.0, "press": 0.0, "step_mm": 8.0, "cw": False, "tilt_deg": 0.0, "gripper_reach": None, "camera_reach": None},
+    "circle": {"views": 1, "inset": 2.5, "approach": 5.0, "press": 0.0, "step_mm": 8.0, "cw": False, "tilt_deg": 0.0,
+               "bottom_tilt": 15.0, "bottom_offset": 0.0, "smooth": False},
     "pivot": {"tilt": 12.0, "guess_len": 260.0, "approach": 40.0, "pen_len": 0.0},
     "ridge": {"views": 5, "approach": 5.0, "press": 0.0, "step_mm": 2.0, "end_margin": 8.0, "reverse": False, "segmented": False},
     "scan": {"cam_h": 380.0, "radius": 60.0, "n_ring": 8, "clearance": 40.0, "obj_h": 0.0,
              "tilts": "25,40", "n_tilt": 10, "view_dist": 290.0},
 }
-WORKPIECES = {"A": "A 立體 L 型 (脊線塗)", "B": "B 兩片板縫合塗", "C": "C 平面其他形狀 (邊緣塗)"}
+WORKPIECES = {"A": "A 立體 L 型 (脊線塗)", "B": "B 兩片板縫合塗", "C": "C 鮪魚罐頭 (外圈塗)"}
 
 
 def load_config():
@@ -476,6 +477,18 @@ def task_registry(cfg):
              "--dz", str(vf.get("dz", 0.0))] + spd
         return a + (["--go"] if mode == "go" else [])
 
+    def circle(mode, target, tilt):
+        a = ["--target", target, "--tilt-deg", str(tilt), "--views", str(int(cc.get("views", 1))),
+             "--inset", str(cc.get("inset", 2.5)), "--approach", str(cc.get("approach", 5.0)),
+             "--press", str(cc.get("press", 0.0)), "--step-mm", str(cc.get("step_mm", 8.0)),
+             "--speed", str(min(15, int(cm.get("speed", 10))))]
+        pen_len = cfg.get("pivot", {}).get("pen_len")
+        a += ["--pen-len", str(pen_len)] if pen_len and tilt > 0 else []
+        a += ["--bottom-offset", str(cc["bottom_offset"])] if target == "bottom" and cc.get("bottom_offset") else []
+        a += ["--cw"] if cc.get("cw") else []
+        a += ["--smooth"] if cc.get("smooth") else []
+        return a + (["--go"] if mode == "go" else [])
+
     return {
         "verify_circle": {"label": "畫圓驗證 (視覺 -> 筆尖)", "script": "pen_verify_circle.py", "uses_camera": True,
                           "moves": True, "build": verify},
@@ -504,15 +517,10 @@ def task_registry(cfg):
                                             "--speed", str(min(15, int(cm.get("speed", 10))))]
                                            + (["--reverse"] if rg.get("reverse") else [])
                                            + (["--segmented"] if rg.get("segmented") else []) + (["--go"] if m == "go" else [])},
-        "circle_trace": {"label": "沿圓外圈描繪 (工件 C 罐頭)", "script": "circle_trace.py", "uses_camera": True, "moves": True,
-                         "build": lambda m: ["--views", str(int(cc.get("views", 1))), "--inset", str(cc.get("inset", 2.5)),
-                                             "--approach", str(cc.get("approach", 5.0)), "--press", str(cc.get("press", 0.0)),
-                                             "--step-mm", str(cc.get("step_mm", 8.0)),
-                                             "--speed", str(min(15, int(cm.get("speed", 10))))]
-                                            + [part for key in ("gripper_reach", "camera_reach") if cc.get(key)
-                                               for part in ("--" + key.replace("_", "-"), str(cc[key]))]
-                                            + (["--cw"] if cc.get("cw") else [])
-                                            + ["--tilt-deg", str(float(cc.get("tilt_deg") or 0.0))] + (["--go"] if m == "go" else [])},
+        "circle_trace": {"label": "罐頭頂面外圈 (工件 C)", "script": "circle_trace.py", "uses_camera": True, "moves": True,
+                         "build": lambda m: circle(m, "rim", float(cc.get("tilt_deg") or 0.0))},
+        "circle_bottom": {"label": "罐頭底面外圍 傾斜 (工件 C)", "script": "circle_trace.py", "uses_camera": True, "moves": True,
+                          "build": lambda m: circle(m, "bottom", float(cc.get("bottom_tilt") or 15.0))},
         "pen_pivot": {"label": "筆尖 3D 校正 (傾斜描繪用)", "script": "pen_pivot.py", "uses_camera": False, "moves": True,
                       "build": lambda m: ["--tilt", str(cfg.get("pivot", {}).get("tilt", 12.0)),
                                           "--guess-len", str(cfg.get("pivot", {}).get("guess_len", 260.0)),
@@ -535,7 +543,7 @@ def task_registry(cfg):
         "depth_compare": {"label": "深度設定比較 (唯讀)", "script": "depth_compare.py", "uses_camera": True, "moves": False,
                           "build": lambda m: ["--truth", str(float(sm.get("board_h") or 5.0))]},
         "seam_boards": {"label": "縫合線擷取 (唯讀)", "script": "seam_boards.py", "uses_camera": True, "moves": False,
-                        "build": lambda m: ["--camera", "--board-h", str(sm.get("board_h", 0)), "--step-mm", str(sm.get("step_mm", 2)),
+                        "build": lambda m: ["--camera", "--board-h", str(float(sm.get("board_h") or 5.0)), "--step-mm", str(sm.get("step_mm", 2)),
                                             "--label", f"wp{wp_.get('type', '')}"]},
         "warp_sort": {"label": "筆蓋分類 (舊 ArUco)", "script": "warp_sort.py", "uses_camera": True, "moves": True,
                       "build": lambda m: spd + (["--go"] if m == "go" else [])},

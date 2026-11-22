@@ -11,9 +11,13 @@
   4. 沿圓周每 --step-mm 一點 MovL (圓是曲線,台達 GO 一次只能一個目標,所以是多段直線;--step-mm 4 時弦高 < 0.1 mm)
   5. 抬起 -> 回正上方拍照 -> 量筆跡離規劃圓的徑向偏差 / 涵蓋率 (data/circle_check.json、images/circle_check.jpg) -> 回 home
 
-傾斜描繪 (--tilt-deg,例如 20):筆往圓心外倒 (筆身在外、筆尖朝內下壓),每一點姿態 = 垂直姿態繞該點圓切線轉 tilt。
-  需要先做 pen_pivot.py (筆尖 3D 校正);TCP = 垂直時的 TCP + (R0 - R)·p。換姿態都在高處原地轉。
-  手臂走不到某個傾斜姿態 (關節極限 / 奇異點) 就停止、抬起 (傾斜時抬到 home 高度) 轉回垂直、回 home。
+傾斜描繪 (--tilt-deg 5~20,或 --target bottom = 底面外圍,預設 15 度):
+  - 只需要護貝紙筆尖校正:筆尖 3D 位置由這次的 home 照片 + 分身的手眼自動推出 (pen_tip_twin.estimate),不做傾斜碰點。
+  - 開始前用分身檢查整套動作和「每一點中止時怎麼回 home」(tilt_plan / twin_check),沒過就不動。
+  - 換姿態一律繞筆尖轉 (筆尖留在工件上方原處);先空走一圈,再按 Enter 下降,人工確認接觸 (c) 才畫。
+  - 底面外圍畫在紙上;離罐壁多遠由工具外形自動算 (15 度約 11 mm,受筆身粗細限制,貼不到牆角)。
+
+連續運動 (--smooth):控制器 RL MovL + PASS,見 smooth_motion.py。控制器沒設定好時自動改用逐點。
 
   python circle_trace.py                 # dry-run:只用 home 一張找圓、出計畫圖 (circle_trace_plan.png),不動手臂
   python circle_trace.py --go            # 執行
@@ -112,46 +116,6 @@ def analyze_circle(before, after, layout, K, center, r, h, corridor=8.0, bin_deg
     return res, view
 
 
-def pen_points(T, Rm, p_tip, body_mm=120.0, n=7):
-    """TCP 位置 T、姿態 Rm -> 筆尖與筆身 (從筆尖往 TCP 方向 body_mm) 的取樣點 (手臂座標)。"""
-    tip = np.asarray(T) + Rm @ p_tip
-    u = -(Rm @ p_tip) / np.linalg.norm(p_tip)               # 筆尖 -> TCP 方向
-    return np.array([tip + u * body_mm * k / (n - 1) for k in range(n)])
-
-
-def rotation_margin(T, R_from, R_to, p_tip, R0, A, tcal, z_touch, center, r_obj, h_obj, steps=12,
-                    clear_obj=15.0, clear_paper=10.0):
-    """在 TCP = T 原地從 R_from 轉到 R_to (球面內插),筆尖 / 筆身離物體 (圓柱:圓心、半徑、高) 與紙面的最小餘裕 (mm)。
-    負值 = 會撞。座標換算:垂直姿態時筆尖紙面座標 P、高度 h <-> 手臂 (A P + t + (R0 p)_xy, z_touch + h + (R0 p)_z)。"""
-    from scipy.spatial.transform import Rotation, Slerp
-    sl = Slerp([0, 1], Rotation.from_matrix([R_from, R_to]))
-    off = R0 @ p_tip
-    worst = np.inf
-    for k in range(steps + 1):
-        Rm = sl([k / steps]).as_matrix()[0]
-        for q in pen_points(T, Rm, p_tip):
-            h = q[2] - z_touch - off[2]
-            P = np.linalg.solve(A, q[:2] - tcal - off[:2])
-            inside = np.hypot(*(P - np.asarray(center))) < r_obj + 5.0
-            worst = min(worst, (h - h_obj - clear_obj) if inside else (h - clear_paper))
-    return worst
-
-
-def housing_margin(lowest_tcp_z, paper_z, object_height, reaches):
-    """包覆球以 TCP 為球心。全段 MovL 的最低 TCP 高度由兩端決定，與姿態無關。"""
-    return lowest_tcp_z - max(reaches) - (paper_z + object_height + 15.0)
-
-
-def safe_rot_height(T_xy, z0, R_from, R_to, z_max, **kw):
-    """從 z0 開始每次抬 5 mm,直到這次轉動的餘裕 >= 0;超過 z_max 回傳 None。"""
-    z = z0
-    while z <= z_max:
-        if rotation_margin(np.array([T_xy[0], T_xy[1], z]), R_from, R_to, **kw) >= 0:
-            return z
-        z += 5.0
-    return None
-
-
 def summarize_check(r):
     if not r.get("ok"):
         return f"筆跡分析:無法量測 ({r.get('reason', '?')})"
@@ -176,10 +140,13 @@ def main():
                     help="圓周上每幾 mm 一點 (8 mm 在半徑 37 mm 時弦高 0.2 mm;每段手臂要約 2 秒加減速,段數越少越快)")
     ap.add_argument("--no-color", action="store_true", help="不用彩色邊緣修正圓心 (只用深度)")
     ap.add_argument("--no-pen-offset", action="store_true", help="不套用筆跡回饋學到的筆尖偏移")
-    ap.add_argument("--tilt-deg", type=float, default=0.0,
-                    help="筆往圓心外傾斜幾度 (筆身往外倒、筆尖朝內下壓);0 = 垂直。需要先做 pen_pivot.py 筆尖 3D 校正")
-    ap.add_argument("--gripper-reach", type=float, help="TCP 到夾爪最遠外緣的實測上界 (mm，含張開狀態)")
-    ap.add_argument("--camera-reach", type=float, help="TCP 到相機與支架最遠外緣的實測上界 (mm)")
+    ap.add_argument("--target", choices=["rim", "bottom"], default="rim", help="rim = 頂面捲邊;bottom = 底面外圍 (紙上)")
+    ap.add_argument("--tilt-deg", type=float, default=None,
+                    help="筆往圓心外傾斜幾度 (5~20);0 = 垂直。預設:rim 0、bottom 15")
+    ap.add_argument("--bottom-offset", type=float, default=None,
+                    help="底面模式:筆尖中心離罐壁 mm (不能比分身算的最小值小;預設 = 最小值)")
+    ap.add_argument("--pen-len", type=float, default=None, help="尺量筆長:法蘭面到筆尖 mm (不給 = 分身推算)")
+    ap.add_argument("--smooth", action="store_true", help="連續運動 (控制器要先裝 loader,見 smooth_motion.py)")
     ap.add_argument("--tilt-in", action="store_true", help="改成往圓心內傾斜 (筆身往內倒)")
     ap.add_argument("--start-deg", type=float, default=None, help="起點角度 (紙面座標;預設 = 離 home 最近的方向)")
     ap.add_argument("--cw", action="store_true", help="順時針 (預設逆時針)")
@@ -192,23 +159,25 @@ def main():
     if not 0.0 <= args.inset <= 8.0:
         sys.exit("--inset 需在 0~8 mm")
 
+    if args.tilt_deg is None:
+        args.tilt_deg = 15.0 if args.target == "bottom" else 0.0
     if not np.isfinite(args.tilt_deg) or args.tilt_deg < 0:
         ap.error("傾角必須是有限的非負數")
+    if args.target == "bottom" and args.tilt_deg == 0:
+        ap.error("底面外圍一定要傾斜 (垂直時夾爪和筆身的檢查不在這個流程裡)")
+    if not np.isfinite(args.approach) or args.approach < 0:
+        ap.error("接近高度必須是有限的非負數")
     if args.tilt_deg > 0:
-        import pen_pivot
-        reaches = (args.gripper_reach, args.camera_reach)
-        if any(r is None or not np.isfinite(r) or r <= 0 for r in reaches):
-            ap.error("傾斜描繪需要 --gripper-reach 和 --camera-reach 的實測上界")
-        tip = pen_pivot.load_tip()
-        if tip is None:
-            ap.error("傾斜描繪需要筆尖 3D 校正")
-        if not np.isfinite(args.approach) or args.approach < 0:
-            ap.error("接近高度必須是有限的非負數")
+        args.speed = min(args.speed, 8)                 # 傾斜還沒上機驗證:限速
+    import smooth_motion
+    import tilt_plan
+    import pen_tip_twin
     from pymodbus.client import ModbusTcpClient
     import warp_pick as wp
     from drv_modbus import send, request
+    from pen_calibrate import refresh
     from rs_capture import RSCamera
-    from pen_calibrate import Arm, Paused, ask
+    from pen_calibrate import Arm, MOVE_ERRORS, Paused, ask
     from pen_quick_calib import Quit, probe_with_nudge
 
     with open(args.layout, encoding="utf-8") as f:
@@ -261,18 +230,29 @@ def main():
         views_done = [home_view]
         rim, src, pose_src, img_src = rim0, "home", hp, snap["color"]
         status, res = "failed", {}
+        tp, sm, stuck = None, None, False
+        tilted = args.tilt_deg > 0
         try:
+            if tilted:
+                # 動之前先用 home 一張的結果完整檢查一次,不通過就連掃描都不做
+                import twin_check
+                twin = twin_check.Twin()
+                tip = pen_tip_twin.estimate(hp, tcp, cal["data"], twin.model["hand_eyes"], args.pen_len)
+                print(f"  筆尖 (分身推算) {np.round(tip['p'], 1).tolist()} mm,筆長來源 {tip['z_source']} ±{tip['z_unc']:.1f}")
+            if args.smooth and args.go:
+                sm = smooth_motion.Smooth(c, log)
+                try:
+                    ask("連續運動自我測試 (不動手臂):會啟動控制器 RL 900,之後描繪會覆蓋點位表 501 起的暫存點。按 Enter ")
+                    refresh(c)
+                    sm.preflight()
+                    print("  連續運動可以用")
+                except smooth_motion.SmoothUnavailable as e:
+                    print("  連續運動不能用,改成逐點描繪:", e)
+                    sm = None
             if args.go:
                 obj_c = dict(obj_plan, center=rim0["center"])
                 targets = quick_targets(obj_c, [1.0, 0.0], args.views, args.radius)
                 views, pinfo = scan3d.plan_views(obj_plan, hp, tcp, A, tcal, z_touch, args, (W, H), targets=targets)
-                if args.tilt_deg > 0:
-                    import scan_tilt as stl
-                    paper_z = z_touch + (stl.R_tool(home[3:], tip["conv"]) @ tip["p"])[2]
-                    scan_low = min([tcp[2], home[2]] + [v["tcp"][2] for v in views])
-                    clearance = housing_margin(scan_low, paper_z, obj_plan["h_max"], reaches)
-                    if not np.isfinite(clearance) or clearance < 0:
-                        raise Quit("快速掃描的夾爪／相機淨空不足")
                 print(f"\n快速掃描 {len(views)} 點:相機離紙 {pinfo['cam_h_scan']:.0f} mm,筆尖比物體高 "
                       f"{pinfo['pen_clearance_over_object']:.0f} mm,全部朝正下方 (不傾斜)")
                 ask("確認筆已夾好、手放急停旁後按 Enter 開始快速掃描 ")
@@ -283,7 +263,7 @@ def main():
                     d_tcp = np.array(tcp_now[:3]) - np.array(tcp[:3])
                     dpen = np.linalg.solve(A, d_tcp[:2])
                     pred_C = hp["C"] + np.array([dpen[0], dpen[1], -d_tcp[2]])
-                    pose, psrc, tp, _ = scan3d.choose_pose(s_["color"], layout, K, scan3d.pose_from_center(hp["R"], pred_C))
+                    pose, psrc, _, _ = scan3d.choose_pose(s_["color"], layout, K, scan3d.pose_from_center(hp["R"], pred_C))
                     log.save_snapshot(v["name"], s_, info)
                     views_done.append({"name": v["name"], "color": s_["color"], "mm": mmv, "K": K, "pose": pose,
                                        "pose_source": psrc, "pred_C": pred_C, "tcp": tcp_now})
@@ -321,40 +301,43 @@ def main():
                 start_deg = float(np.degrees(np.arctan2(d[1], d[0])))
             else:
                 start_deg = args.start_deg
-            path3 = circle_rim.circle_path(rim["center"], r_draw, h_draw, args.step_mm, start_deg, ccw=not args.cw)
+            h_path = 0.0 if args.target == "bottom" else h_draw
             o_pen, o_note, _ = (np.zeros(2), "已關閉", 0) if args.no_pen_offset else pen_offset.learned()
             if np.any(o_pen != 0):
                 print(f"  筆尖偏移修正 ({o_note}):路徑移 ({-o_pen[0]:+.2f}, {-o_pen[1]:+.2f}) mm")
-            path_robot = np.array([[*(A @ (p[:2] - o_pen) + tcal), z_touch + p[2]] for p in path3])
-            # ---- 傾斜:每一點的姿態 = 垂直姿態繞「該點圓切線」轉 tilt;TCP = 垂直時的 TCP + (R0 - R)·p (p = 筆尖在工具座標) ----
-            oris = [list(home[3:])] * len(path_robot)
-            if args.tilt_deg > 0:
-                import scan_tilt as stl
-                if args.tilt_deg > 35:
-                    print(f"  注意:傾斜 {args.tilt_deg:g}° 超過筆尖校正測過的範圍 / 11-11 曾在 40° 卡在奇異點")
-                p_tip = tip["p"]
-                R0 = stl.R_tool(home[3:], tip["conv"])
-                oris, adj = [], []
-                for pt in path3:
-                    rad_p = (pt[:2] - np.asarray(rim["center"])) / np.linalg.norm(pt[:2] - np.asarray(rim["center"]))
-                    rad_b = A @ rad_p
-                    rad_b = np.array([rad_b[0], rad_b[1], 0.0]) / np.linalg.norm(rad_b)
-                    t_b = np.cross([0.0, 0.0, 1.0], rad_b)                       # 圓切線 (手臂座標)
-                    best = None
-                    for sg in (1, -1):
-                        Rk = stl.tilt_base(t_b, sg * args.tilt_deg) @ R0
-                        tipdir = Rk @ (p_tip / np.linalg.norm(p_tip))           # TCP -> 筆尖的方向
-                        inward = -(tipdir[:2] @ rad_b[:2])                        # 筆尖往圓心那側 = 筆身往外倒
-                        score = -inward if args.tilt_in else inward
-                        if best is None or score > best[0]:
-                            best = (score, Rk)
-                    Rk = best[1]
-                    oris.append(stl.angles_of(Rk, tip["conv"], near=home[3:]))
-                    adj.append((R0 - Rk) @ p_tip)
-                path_robot = path_robot + np.array(adj)
-                print(f"  傾斜 {args.tilt_deg:g}° ({'往內' if args.tilt_in else '往圓心外'}倒);筆尖校正 p = "
-                      f"{np.round(p_tip, 1).tolist()} mm (殘差 {tip.get('rms_mm', float('nan')):.2f} mm);"
-                      f"TCP 修正量最大 {np.max(np.linalg.norm(adj, axis=1)):.0f} mm")
+
+            def make_path(r):
+                return circle_rim.circle_path(rim["center"], r, h_path, args.step_mm, start_deg, ccw=not args.cw)
+
+            offset, precheck = None, None
+            if tilted:
+                try:
+                    tp = tilt_plan.TiltPlan(cal["data"], tcp, tip, rim["center"], rim["r_outer"],
+                                            max(h_draw, obj["h_max"]) + 3.0, args.tilt_deg, twin=twin, inward=args.tilt_in)
+                    if args.target == "bottom":
+                        least = tilt_plan.bottom_offset(tp, make_path, o_pen)
+                        if args.bottom_offset is not None and args.bottom_offset < least:
+                            raise tilt_plan.PlanError(f"離罐壁 {args.bottom_offset:g} mm 太近,最少要 {least:g} mm")
+                        offset = args.bottom_offset or least
+                        r_draw = rim["r_outer"] + offset
+                    tp.set_path(make_path(r_draw), o_pen, args.target)
+                    print("  分身執行前檢查中 (可達、關節、奇異點、碰撞、每一點的中止路徑) ...")
+                    precheck = tp.verify(start=list(__import__("pen_pivot").read_pose(c)) if args.go else None)
+                except tilt_plan.PlanError as e:
+                    print("  分身執行前檢查:不通過 ->", e)
+                    log.event("precheck", ok=False, reason=str(e))
+                    raise Quit(str(e))
+                print(f"  分身執行前檢查:通過 (關節最小餘裕 {precheck['margin_deg']:.1f} 度、筆尖側向誤差約 "
+                      f"±{precheck['tip_err_mm']:.1f} mm" + (f"、離罐壁 {offset:g} mm" if offset else "") + ")")
+                log.event("precheck", pen_tip=np.asarray(tip["p"]).tolist(), z_unc=tip["z_unc"], bottom_offset=offset,
+                          **precheck)
+            path3 = make_path(r_draw)
+            if tilted:
+                path_robot = np.array([p[:3] for p in tp.draw])
+                oris = [p[3:] for p in tp.draw]
+            else:
+                path_robot = np.array([[*(A @ (p[:2] - o_pen) + tcal), z_touch + p[2]] for p in path3])
+                oris = [list(home[3:])] * len(path_robot)
             view = draw_plan(img_src, pose_src, K, dict(rim), path3, r_draw)
             log.save_image("plan.jpg", view)
             cv2.imencode(".png", view)[1].tofile(os.path.join(HERE, "circle_trace_plan.png"))
@@ -363,69 +346,82 @@ def main():
                     "start_deg": start_deg, "path_paper_xyh": path3.tolist(), "path_robot": path_robot.tolist(),
                     "z_touch": z_touch, "z_safe": z_safe, "object_home": obj, "cam_h_mm": cam_h_src,
                     "pen_offset_applied": o_pen.tolist(), "pen_offset_note": o_note,
-                    "tilt_deg": args.tilt_deg, "oris": oris}
+                    "tilt_deg": args.tilt_deg, "oris": oris, "target": args.target, "bottom_offset": offset,
+                    "h_path": h_path, "precheck": precheck, "smooth": sm is not None}
             log.save_json("plan", plan)
             log.save_csv("path_robot_mm", ["x", "y", "z_est"], path_robot.tolist())
             print(f"  路徑 {len(path3)} 點 (每 {args.step_mm:g} mm,含頭尾重疊);起點 TCP ({path_robot[0][0]:.1f}, "
                   f"{path_robot[0][1]:.1f}),估計接觸 z {path_robot[0][2]:.2f};移動高度 z {z_safe:.1f}")
-            if args.tilt_deg > 0:
-                # 人工找接觸和下壓最多到各點預估高度以下 4 mm。包覆球全程高過工件頂面。
-                margin = housing_margin(float(np.min(path_robot[:, 2])) - 4.0,
-                                        z_touch + (R0 @ p_tip)[2],
-                                        max(obj_plan["h_max"], h_draw, obj["h_max"] + 3.0), reaches)
-                if args.go:
-                    margin = min(margin, housing_margin(scan_low, paper_z,
-                                     max(obj_plan["h_max"], h_draw, obj["h_max"] + 3.0), reaches))
-                log.event("housing_clearance", margin_mm=margin, reaches_mm=reaches)
-                if not np.isfinite(margin) or margin < 0:
-                    raise Quit(f"夾爪／相機包覆球淨空不足 ({margin:.1f} mm)")
             if not args.go:
                 status, res = "dry-run", {"r_outer": rim["r_outer"], "h_rim_mm": rim["h_rim_mm"]}
                 print("\n(dry-run) 沒有移動手臂。看 circle_trace_plan.png:綠 = 外緣、洋紅 = 要畫的圓、綠圈 = 起點。確認後加 --go")
                 raise StopIteration
 
+            def follow(points, what):
+                """目前在 points[0]:沿 points 走完。連續運動可用就用,否則逐點。回傳走到第幾點。"""
+                k, t0 = 1, time.time()
+                how = "smooth" if sm else "segmented"
+                while k < len(points):
+                    if sm:
+                        refresh(c)
+                        why, n = sm.run(points[k:], min(args.speed, smooth_motion.MAX_SPEED), poll=arm._poll)
+                        if why == "ctrl_c":
+                            raise Paused("ctrl_c")
+                        k = len(points) if why == "done" else k + n
+                        if why == "done":
+                            break
+                    else:
+                        try:
+                            arm.move(*map(float, points[k][:3]), ori=list(points[k][3:]))
+                            k += 1
+                            continue
+                        except send.CommandIgnored as e:
+                            arm.stop_and_check("circle_ignored")
+                            raise Quit(f"手臂沒有走到第 {k} 點 (可能碰到關節極限 / 奇異點):{e}")
+                        except Paused as e:
+                            if str(e) == "ctrl_c":
+                                raise
+                    ch = ""
+                    while ch not in ("r", "q"):
+                        ch = ask(f"暫停 ({what} {k - 1}/{len(points) - 1}):r = 繼續 / q = 抬起回 home > ").strip().lower()
+                    if ch == "q":
+                        raise Quit("使用者結束")
+                sec = time.time() - t0
+                log.event("path_done", what=what, how=how, seconds=round(sec, 1), points=len(points) - 1)
+                print(f"  {what}完成:{len(points) - 1} 段,{sec:.0f} 秒 ({'連續' if sm else '逐點'})")
+                return len(points) - 1
+
             # ---------- 接觸 ----------
             x0, y0, zr0 = path_robot[0]
-            ask(f"\n確認洋紅圓在罐頭捲邊上 (circle_trace_plan.png)、手放急停旁後按 Enter:移到起點上方 z {z_safe:.1f} ")
-            z_hi = max(z_safe, zr0 + args.approach + 10.0)
-            if args.tilt_deg > 0:
-                # 碰撞檢查:起點 (垂直 -> 傾斜) 與終點 (傾斜 -> 垂直) 的原地轉動,模擬筆尖 / 筆身掃過的位置。
-                # 11-18 pen_pivot 事故:傾斜轉回垂直時筆尖會往下掉 ~38 mm;另外筆尖若不在 TCP 正下方,轉動也可能往下。
-                kw = dict(p_tip=p_tip, R0=R0, A=A, tcal=tcal, z_touch=z_touch, center=rim["center"],
-                          r_obj=rim["r_outer"], h_obj=max(h_draw, obj["h_max"]) + 3.0)
-                R_start = stl.R_tool(oris[0], tip["conv"])
-                R_end = stl.R_tool(oris[-1], tip["conv"])
-                zs = safe_rot_height(path_robot[0][:2], z_hi, R0, R_start, float(home[2]), **kw)
-                ze = safe_rot_height(path_robot[-1][:2], z_hi, R_end, R0, float(home[2]), **kw)
-                if zs is None or ze is None:
-                    raise Quit("找不到安全的轉動高度 (筆尖 / 筆身會碰到工件),不執行")
-                z_hi = max(zs, ze)
-                # 描繪中每段:姿態也在變,檢查兩點之間筆尖會不會掉下去 (相對兩端的直線)
-                dev = []
-                from scipy.spatial.transform import Rotation as _Ro, Slerp as _Sl
-                for k in range(1, len(path_robot)):
-                    Ra, Rb = stl.R_tool(oris[k - 1], tip["conv"]), stl.R_tool(oris[k], tip["conv"])
-                    sl = _Sl([0, 1], _Ro.from_matrix([Ra, Rb]))
-                    for f_ in (0.25, 0.5, 0.75):
-                        T_ = path_robot[k - 1] + (path_robot[k] - path_robot[k - 1]) * f_
-                        tip_ = T_ + sl([f_]).as_matrix()[0] @ p_tip
-                        lin = (path_robot[k - 1] + Ra @ p_tip) * (1 - f_) + (path_robot[k] + Rb @ p_tip) * f_
-                        dev.append(tip_[2] - lin[2])
-                print(f"  碰撞檢查:轉動高度 z {z_hi:.1f} (垂直時筆尖離紙 {z_hi - z_touch:.0f} mm);"
-                      f"描繪中段間筆尖高度偏差 {min(dev):+.2f} ~ {max(dev):+.2f} mm (假設控制器姿態做球面內插)")
-                log.event("tilt_safety", z_rot=z_hi, seg_dev_min=min(dev), seg_dev_max=max(dev))
-            arm.move(x0, y0, z_hi)
-            if args.tilt_deg > 0:
-                arm.move(x0, y0, z_hi, ori=oris[0])           # 在高處原地轉 (繞 TCP,筆尖只會變高)
-                arm.ori = list(oris[0])                       # 人工找接觸時保持起點的傾斜
+            z_floor = zr0 - (2.0 if args.target == "bottom" else 4.0)
+            allow = None
+            if tilted:
+                above, up = tp.entry()
+                air = [[p[0], p[1], p[2] + tilt_plan.AIR_LIFT] + p[3:] for p in tp.draw]
+                ask(f"\n確認洋紅圓位置 (circle_trace_plan.png)、工件和校正紙沒動、周圍沒有其他東西,手放急停旁。\n"
+                    f"按 Enter:移到起點上方、繞筆尖傾斜 {args.tilt_deg:g} 度,先在高 {tilt_plan.AIR_LIFT:g} mm 處空走一圈 (不碰工件) ")
+                arm.move(*above[:3], ori=list(home[3:]))
+                arm.move(*up[:3], ori=up[3:])
+                arm.ori = list(up[3:])
+                arm.move(*air[0][:3], ori=air[0][3:])
+                follow(air, "空走")
+                end_up = tp.raised(air[-1])
+                arm.move(*end_up[:3], ori=end_up[3:])
+                arm.move(*up[:3], ori=up[3:])
+                ask("空走時夾爪、相機、線材都沒有碰到東西,而且圓的位置正確?按 Enter 下降找接觸 (不對就按 Ctrl+C) ")
+                z_hi = up[2]
+                allow = lambda x, y, z: tp.allowed([x, y, z] + list(arm.ori))
+            else:
+                ask(f"\n確認洋紅圓在罐頭捲邊上 (circle_trace_plan.png)、手放急停旁後按 Enter:移到起點上方 z {z_safe:.1f} ")
+                z_hi = max(z_safe, zr0 + args.approach + 10.0)
+                arm.move(x0, y0, z_hi)
             z_start = zr0 + args.approach
-            z_floor = zr0 - 4.0
             arm.move(x0, y0, z_start)
             print(f"\n=== 已在起點上方 {args.approach:g} mm (z = {z_start:.2f});每步 0.5 mm 往下 (Enter),"
-                  f"筆尖剛好碰到捲邊就按 c (最低到 z {z_floor:.2f}) ===")
+                  f"筆尖剛好碰到{'紙' if args.target == 'bottom' else '捲邊'}就按 c (最低到 z {z_floor:.2f}) ===")
             genuine = False
             while True:
-                x, y, z_c = probe_with_nudge(arm, x0, y0, z_start, 0.5, z_floor, z_hi)
+                x, y, z_c = probe_with_nudge(arm, x0, y0, z_start, 0.5, z_floor, z_hi, allow=allow)
                 if z_c < z_start - 0.05:
                     genuine = True
                     break
@@ -441,7 +437,7 @@ def main():
             log.event("contact", robot_xy=[x, y], z=z_c, z_est=zr0, dz=dz, shift=shift.tolist())
             h_contact = z_c - z_touch
             print(f"  接觸 z {z_c:.2f} (估計 {zr0:.2f},差 {dz:+.2f} mm);接觸換算捲邊高 {h_contact:.2f} mm")
-            if args.tilt_deg == 0 and genuine and rim["h_rim_mm"] > 5:
+            if not tilted and genuine and rim["h_rim_mm"] > 5:
                 g_obs = h_contact / rim["h_rim_mm"]
                 if 0.9 < g_obs < 1.25:
                     CalibrationStore().save("ridge_height_gain", {"gain": g_obs, "h_contact_mm": h_contact,
@@ -451,38 +447,24 @@ def main():
                     print(f"  這次增益 {g_obs:.3f} (已記錄)")
             path_draw = path_robot.copy()
             path_draw[:, :2] += shift
-            path_draw[:, 2] = np.maximum(path_robot[:, 2] + dz - args.press, path_robot[:, 2] - 4.0)
-            if args.tilt_deg > 0:
-                end_height = safe_rot_height(path_draw[-1, :2], z_hi, R_end, R0, float(home[2]), **kw)
-                if end_height is None:
-                    raise Quit("微調後的終點缺少轉回垂直的淨空")
-                z_hi = end_height
-            # ---------- 描繪 ----------
-            done, k, t0 = 0, 1, time.time()
-            while k < len(path_draw):
+            path_draw[:, 2] = np.maximum(path_robot[:, 2] + dz - args.press, path_robot[:, 2] - (zr0 - z_floor))
+            draw6 = [list(map(float, p)) + list(o) for p, o in zip(path_draw, oris)]
+            if tilted:
                 try:
-                    arm.move(*map(float, path_draw[k]), ori=oris[k])
-                    done = k
-                    k += 1
-                except send.CommandIgnored as e:
-                    arm.stop_and_check("circle_ignored")
-                    raise Quit(f"手臂沒有走到第 {k} 點 (傾斜姿態可能碰到關節極限 / 奇異點):{e}")
-                except Paused as e:
-                    if str(e) == "ctrl_c":
-                        raise
-                    ch = ""
-                    while ch not in ("r", "q"):
-                        ch = ask(f"暫停 (畫到 {done}/{len(path_draw) - 1}):r = 繼續 / q = 抬起回 home > ").strip().lower()
-                    if ch == "q":
-                        raise Quit("使用者結束")
-                    arm.move(*map(float, path_draw[done]), ori=oris[done])
+                    tp.verify(draw6)                    # 微調 + 接觸高度之後再檢查一次
+                except tilt_plan.PlanError as e:
+                    raise Quit(f"微調後的路徑沒通過檢查:{e}")
+            # ---------- 描繪 ----------
+            t0 = time.time()
+            done = follow(draw6, "描繪")
             log.event("trace_done", points=done, of=len(path_draw) - 1, seconds=round(time.time() - t0, 1))
-            print(f"  描繪完成 {done} 段,{time.time() - t0:.0f} 秒")
-            arm.lift_to(z_hi)
-            if args.tilt_deg > 0:
-                pcur = __import__("pen_pivot").read_pose(c)
-                arm.move(pcur[0], pcur[1], pcur[2], ori=home[3:])    # 高處轉回垂直
+            if tilted:
+                refresh(c)
+                for p in tp.escape(list(request.Get_TCP_Pose(c)))[:2]:
+                    arm.move(*p[:3], ori=p[3:])
                 arm.ori = list(home[3:])
+            else:
+                arm.lift_to(z_hi)
             check_pairs = []
             c_view = next((v for v in views_done if v["name"] == "c" and v.get("tcp")), None)
             if c_view is not None:
@@ -501,7 +483,7 @@ def main():
             status, res = "ok", {"points_done": done, "dz_mm": dz}
             best = None
             for before, after, name in check_pairs:
-                r_, v_ = analyze_circle(before, after, layout, K, [rim["center"][0] + 0, rim["center"][1]], r_draw, h_draw + dz)
+                r_, v_ = analyze_circle(before, after, layout, K, [rim["center"][0] + 0, rim["center"][1]], r_draw, h_path + dz)
                 r_["view"] = name
                 pose_a = scan3d.tag_pose(after, layout, K)
                 if pose_a is not None:
@@ -512,7 +494,7 @@ def main():
             best = best or r_
             log.save_json("circle_check", best)
             print("\n" + summarize_check(best))
-            if best.get("ok") and best.get("coverage", 0) >= 0.5:
+            if not tilted and best.get("ok") and best.get("coverage", 0) >= 0.5:    # 傾斜的誤差含筆長,不混進垂直的偏移
                 sh = best["ink_circle"]["center_shift_mm"]
                 if pen_offset.record(np.eye(2), sh, o_pen, "circle", run=log.path, extra={"coverage": best["coverage"]}):
                     print(f"  回饋:筆跡圓心偏 ({sh[0]:+.2f}, {sh[1]:+.2f}) mm 已記錄,下次自動修正筆尖偏移")
@@ -520,23 +502,34 @@ def main():
                                                     "coverage")}, check_view=best.get("view"))
         except StopIteration:
             pass
-        except (Quit, Paused, KeyboardInterrupt) as e:
-            print("\n停止:", e, "-> 垂直抬起回 home")
+        except smooth_motion.SmoothStuck as e:
+            stuck = True
+            status, res = "failed", {"reason": str(e)}
+            print("\n!!! 連續運動狀態不明:", e, "\n!!! 不再送任何移動指令。請按實體急停,在教導器確認 RL 已停止後再回 home")
+        except (Quit, Paused, KeyboardInterrupt, smooth_motion.SmoothFailed,
+                smooth_motion.SmoothUnavailable) + MOVE_ERRORS as e:
             status, res = "aborted", {"reason": str(e)}
-            try:
-                if not args.go:
-                    raise Paused("dry-run 沒有移動手臂")
-                # 傾斜時:先維持姿態抬到 home 高度再轉回垂直 (11-18:轉回垂直時筆尖會往下掉約 38 mm)
-                arm.lift_to(float(home[2]) if args.tilt_deg > 0
-                            else min(float(home[2]), z_touch + obj_plan["h_max"] + args.clearance))
-                pcur = __import__("pen_pivot").read_pose(c)
-                arm.move(pcur[0], pcur[1], pcur[2], ori=home[3:])        # 先轉回垂直 (傾斜時)
-                arm.move(*home[:3], ori=home[3:])
-            except (Paused, KeyboardInterrupt, send.CommandIgnored, TimeoutError):
-                print("已停止,手臂停在目前位置 (之後用回 home)")
+            if not args.go:
+                print("\n停止:", e, "(dry-run,手臂沒有動)")
+            else:
+                print("\n停止:", e, "-> 垂直抬起回 home")
+                try:
+                    refresh(c)
+                    now = __import__("pen_pivot").read_pose(c)
+                    if now is None:
+                        raise ConnectionError("讀不到手臂位置")
+                    if tp is not None:
+                        # 傾斜:維持姿態抬到工件上方 -> 繞筆尖轉回垂直 -> 回 home (抬到 home 高度在圓上很多點到不了)
+                        for p in tp.escape(list(now)):
+                            arm.move(*p[:3], ori=p[3:])
+                    else:
+                        arm.lift_to(min(float(home[2]), z_touch + obj_plan["h_max"] + args.clearance))
+                        arm.move(*home[:3], ori=home[3:])
+                except (Paused, KeyboardInterrupt) + MOVE_ERRORS:
+                    print("已停止,手臂停在目前位置 (之後用回 home)")
         cam.close()
         c.close()
-        res.update(source=src, r_outer=rim["r_outer"], h_rim_raw=rim["h_rim_mm"])
+        res.update(target=args.target, tilt_deg=args.tilt_deg, stuck=stuck, source=src, r_outer=rim["r_outer"], h_rim_raw=rim["h_rim_mm"])
         log.finish(status, res)
         print("紀錄:", log.path)
 

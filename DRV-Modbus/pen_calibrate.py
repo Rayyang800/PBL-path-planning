@@ -259,6 +259,10 @@ def ask(prompt):
     return input(prompt)
 
 
+# 任務中止、但仍要「抬起回 home」的例外:連線瞬斷、指令被拒、逾時也一樣要抬起,不能讓筆壓在工件上
+MOVE_ERRORS = (TimeoutError, ConnectionError, __import__("pymodbus").exceptions.ModbusException)
+
+
 class Arm:
     def __init__(self, c, log, ori, speed):
         self.c, self.log, self.ori, self.speed = c, log, list(ori), speed
@@ -283,10 +287,17 @@ class Arm:
         except Exception:     # noqa: BLE001 - 連線斷了也要繼續往下提示
             refresh(self.c)
             send.Stop(self.c)
+        # 11-22 查 runs/:寫 0 之後手臂約 0.6 秒內減速停下 (4 次停在離目標 29~206 mm 處、之後不再移動)。
+        # 減速中就讀位置當「抬起」的起點會斜著抬,所以等到連續兩次讀到同一個位置 (最多 5 秒) 再往下。
         p1 = request.Get_TCP_Pose(self.c)
-        time.sleep(0.6)
-        p2 = request.Get_TCP_Pose(self.c)
-        moving = p1 is not None and p2 is not None and send._pos_dist(p1, p2) > 0.5
+        moving, t0 = True, time.time()
+        while True:
+            time.sleep(0.6)
+            p2 = request.Get_TCP_Pose(self.c)
+            moving = p1 is None or p2 is None or send._pos_dist(p1, p2) > 0.5
+            if not moving or time.time() - t0 > 5.0:
+                break
+            p1 = p2
         self.log.event("stop", reason=why, pose=p2, still_moving=moving)
         if moving:
             print("\n!!! 停止指令後手臂仍在移動,請立刻按實體急停 !!!")

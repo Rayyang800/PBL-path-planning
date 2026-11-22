@@ -15,12 +15,72 @@
     <span class="badge" id="b-paper">校正紙 —</span>
     <span class="badge" id="b-task">任務 —</span>
   </div>
-  <button class="btn danger" id="btn-stop" title="寫 0x0300=1000;對移動中的手臂是否有效未驗證,實體急停才可靠">送停止指令</button>
+  <span class="estop">緊急時按<b>實體急停</b> · 一般停止:任務視窗 <kbd>Ctrl</kbd>+<kbd>C</kbd> → 抬起回 home</span>
 </header>
 <div class="keybar" id="keybar" hidden></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs><marker id="g-head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path class="g-head" d="M0 0L10 5L0 10Z"/></marker></defs>
+</svg>
 
 <main class="layout">
   <section class="col-main">
+    <details class="card" id="guide">
+      <summary><b>第一次使用:圖解操作</b><span class="muted small">選一種工件,照 5 張圖做</span></summary>
+      <div class="guide-tabs" id="guide-tabs"></div>
+      <ol class="guide-steps" id="guide-steps"></ol>
+      <div class="guide-foot small">
+        <span><b>開始前</b>:手臂在 home、筆已夾好、上方顯示「校正紙 4/4」。</span>
+        <span><b>換筆、重夾、紙移動過</b>:先做右邊的「護貝紙校正」,只有這一種校正要做。</span>
+        <span class="warn-txt">手一直放在實體急停旁。</span>
+      </div>
+    </details>
+
+    <div class="card" id="works">
+      <div class="card-head"><h2>選工件開始描繪</h2><span class="muted small">預覽 = 手臂不動 · 開始 = 手臂會動</span></div>
+      <div class="works">
+        <div class="work">
+          <div class="work-art" data-icon="A"></div>
+          <div class="work-name">A 立體工件</div>
+          <div class="muted small">沿脊線,一次連續畫完</div>
+          <div class="work-btns">
+            <button class="btn" data-launch="ridge_trace" data-mode="dry">預覽</button>
+            <button class="btn primary" data-launch="ridge_trace" data-mode="go">開始</button>
+            <button class="btn ghost" data-help="A" title="看這種工件的圖解">?</button>
+          </div>
+        </div>
+        <div class="work">
+          <div class="work-art" data-icon="B"></div>
+          <div class="work-name">B 兩板縫合</div>
+          <div class="muted small">沿縫,一次連續畫完</div>
+          <div class="work-btns">
+            <button class="btn" data-launch="seam_trace" data-mode="dry">預覽</button>
+            <button class="btn primary" data-launch="seam_trace" data-mode="go">開始</button>
+            <button class="btn ghost" data-help="B" title="看這種工件的圖解">?</button>
+          </div>
+        </div>
+        <div class="work">
+          <div class="work-art" data-icon="C"></div>
+          <div class="work-name">C 罐頭頂面</div>
+          <div class="muted small">沿捲邊一圈,筆垂直</div>
+          <div class="work-btns">
+            <button class="btn" data-launch="circle_trace" data-mode="dry">預覽</button>
+            <button class="btn primary" data-launch="circle_trace" data-mode="go">開始</button>
+            <button class="btn ghost" data-help="C" title="看這種工件的圖解">?</button>
+          </div>
+        </div>
+        <div class="work">
+          <div class="work-art" data-icon="D"></div>
+          <div class="work-name">C 罐頭底面<span class="tag-untested">尚未上機</span></div>
+          <div class="muted small">沿底面外圍,筆自動傾斜</div>
+          <div class="work-btns">
+            <button class="btn" data-launch="circle_bottom" data-mode="dry">預覽</button>
+            <button class="btn primary" data-launch="circle_bottom" data-mode="go">開始</button>
+            <button class="btn ghost" data-help="D" title="看這種工件的圖解">?</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="card video-card">
       <div class="card-head">
         <div class="tabs" id="view-tabs">
@@ -36,24 +96,6 @@
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>立體模型</h2>
-        <select id="m3-run" title="有 model.ply 的紀錄 (多視角立體重建)"></select>
-        <button class="btn ghost small" id="m3-refresh">重新整理</button></div>
-      <div class="m3-wrap"><canvas id="m3-canvas"></canvas>
-        <div class="m3-hint">左鍵拖曳 旋轉 · 右鍵 / Shift+拖曳 平移 · 滾輪 縮放 · 雙擊 重設</div></div>
-      <div class="row m3-ctrl">
-        <button class="btn small" data-m3view="iso">斜視</button><button class="btn small" data-m3view="top">俯視</button>
-        <button class="btn small" data-m3view="front">正視</button><button class="btn small" data-m3view="side">側視</button>
-        <label class="chk"><input type="radio" name="m3-color" value="rgb" checked> 原色</label>
-        <label class="chk"><input type="radio" name="m3-color" value="height"> 高度色</label>
-        <label class="chk"><input type="checkbox" id="m3-obj"> 只顯示物體 (高於紙面 1.5 mm)</label>
-        <label class="chk">點大小 <input type="range" id="m3-size" min="1" max="8" step="0.5" value="2.5"></label>
-      </div>
-      <div class="kv" id="m3-kv"></div>
-      <div class="muted small">綠框 = 頂面 (最高的平台)、橘框 = 底面外框;格線 10 mm;紅/綠/藍短線 = 紙面 x / y (往下) / 高度。</div>
-    </div>
-
-    <div class="card">
       <div class="card-head"><h2>最近的執行紀錄</h2><span class="muted small">每次實作都完整記錄 (runs/)</span>
         <button class="btn ghost" id="btn-refresh-runs">重新整理</button></div>
       <div class="table-wrap">
@@ -64,6 +106,32 @@
   </section>
 
   <aside class="col-side">
+    <div class="card">
+      <div class="card-head"><h2>準備:手臂</h2><span class="muted small" id="robot-msg"></span></div>
+      <div class="row tight">
+        <button class="btn primary" data-launch="go_home" data-mode="go">回 home</button>
+        <button class="btn" data-grip="close">夾緊筆</button>
+        <button class="btn" data-grip="open">張開</button>
+      </div>
+      <div class="kv gap-top" id="robot-kv"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>準備:護貝紙校正</h2></div>
+      <div class="muted small">換筆、重夾、紙移動過才要做。三種工件和傾斜描繪都只靠這一次校正。</div>
+      <div class="row">
+        <button class="btn" data-launch="sheet_calib" data-mode="dry">預覽</button>
+        <button class="btn primary" data-launch="sheet_calib" data-mode="go">開始校正</button>
+      </div>
+      <div class="kv gap-top" id="calib-kv"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>目前任務</h2></div>
+      <div id="task-box" class="small">—</div>
+      <p class="muted small">任務在新開的黑色視窗操作;執行時網頁會暫時放開相機,結束後自動接回。</p>
+    </div>
+
     <div class="card keys-card">
       <div class="card-head"><h2>鍵盤按鍵 (在任務視窗按)</h2>
         <button class="btn ghost small" id="btn-keys-toggle">收起</button></div>
@@ -94,84 +162,80 @@
         </div>
       </div>
     </div>
+  </aside>
 
-    <div class="card">
-      <div class="card-head"><h2>手臂</h2><span class="muted small" id="robot-msg"></span></div>
-      <div class="kv" id="robot-kv"></div>
-      <div class="row">
-        <button class="btn" data-grip="open">夾爪張開</button>
-        <button class="btn" data-grip="close">夾爪夾緊</button>
-        <button class="btn" data-launch="go_home" data-mode="go">回 home</button>
-      </div>
+  <details class="advanced" id="advanced">
+    <summary><b>進階</b><span class="muted small">設定、分析、立體重建、其他校正、除錯。平常不用打開</span></summary>
+    <div class="adv-grid">
+    <div class="card adv-wide">
+      <div class="card-head"><h2>工件與任務設定</h2><span class="muted small" id="cfg-msg"></span></div>
+      <form id="cfg-form" class="form wide"></form>
+      <div class="row"><button class="btn primary" id="btn-save-cfg">儲存設定</button></div>
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>三種工件:一鍵描繪</h2><span class="muted small">按「執行」後在新視窗按 Enter 開始;唯一的人工步驟是確認筆尖碰到 (c)</span></div>
-      <div class="task-row"><div><b>A 立體工件:沿脊線</b><div class="muted small">快速掃描 (正上方、不傾斜) 找脊線 → 人工確認筆尖碰到脊線 (c) → 沿脊線畫 → 回正上方拍照,自動量筆跡偏差與涵蓋率。dry-run 只用 home 一張出計畫圖;「分析」= 重新分析最新一次</div></div>
-        <div class="row"><button class="btn" data-launch="ridge_trace" data-mode="dry">dry-run</button>
-          <button class="btn primary" data-launch="ridge_trace" data-mode="go">執行</button>
-          <button class="btn" data-launch="ridge_check" data-mode="dry" title="不動手臂;重新分析最新一次描繪的筆跡偏差">分析</button></div></div>
-      <div class="task-row"><div><b>B 兩板縫合:沿縫</b><div class="muted small">正上方拍照找縫 → 下降近距離量板厚、再找一次縫 → 降到板面上方,人工確認接觸 (c) → 一次連續畫完 → 回正上方拍照,自動量筆跡偏差並記錄筆尖偏移。板厚預設用深度自動估 (下方設定 0 = 自動)。dry-run 只用 home 一張出計畫圖</div></div>
-        <div class="row"><button class="btn" data-launch="seam_trace" data-mode="dry">dry-run</button>
-          <button class="btn primary" data-launch="seam_trace" data-mode="go">執行</button>
-          <button class="btn" data-launch="seam_boards" data-mode="dry" title="不動手臂;只找縫並顯示">找縫</button></div></div>
-      <div class="task-row"><div><b>C 鮪魚罐頭:沿頂面外圈</b><div class="muted small">正上方拍 1 張 → 頂面外緣圓擬合 → 往內縮 inset 畫在捲邊上 (筆垂直) → 人工確認接觸 (c) → 繞一圈 → 自動量徑向偏差。dry-run 只用 home 一張出計畫圖</div></div>
-        <div class="row"><button class="btn" data-launch="circle_trace" data-mode="dry">dry-run</button>
-          <button class="btn primary" data-launch="circle_trace" data-mode="go">執行</button></div></div>
-    </div>
-
-    <div class="card">
-      <div class="card-head"><h2>深度量測 / 立體 / 進階</h2><span class="muted small" id="work-age"></span></div>
+      <div class="card-head"><h2>分析與深度</h2><span class="muted small" id="work-age"></span></div>
       <div class="kv" id="work-kv"></div>
       <div class="muted small" style="margin-top:6px">畫面上:<span style="color:#ff8c00">橘線 = 影像找到的縫</span>、
         <span style="color:#ff00ff">洋紅線 = 深度找到的縫</span>(勾選「疊圖」)。深度用 848×480、0.1 mm 單位、8 幀中位數。</div>
+      <div class="task-row"><div><b>脊線筆跡分析</b><div class="muted small">不動手臂;重新分析最新一次</div></div>
+        <div class="row"><button class="btn" data-launch="ridge_check" data-mode="dry">分析</button></div></div>
+      <div class="task-row"><div><b>只找縫</b><div class="muted small">不動手臂;顯示縫合線擷取結果</div></div>
+        <div class="row"><button class="btn" data-launch="seam_boards" data-mode="dry">找縫</button></div></div>
       <div class="task-row"><div><b>近距離深度量測</b><div class="muted small">home 量 3 組 → 垂直下降 150 mm 再量 3 組 → 回 home,比較精度</div></div>
         <div class="row"><button class="btn primary" data-launch="depth_closeup" data-mode="go">執行</button></div></div>
-      <div class="task-row"><div><b>筆尖 3D 位置:分身算法 (建議,不動手臂)</b><div class="muted small">用手眼 (scan3d) + 護貝紙筆尖校正 + home 照片推出筆尖在手臂末端的位置,取代傾斜碰點。換筆 / 重夾後:先做護貝紙校正、跑一次任一任務的 dry-run (拍 home),再按「存檔」。有尺量筆長時填在下方設定</div></div>
-        <div class="row"><button class="btn" data-launch="pen_tip_twin" data-mode="dry">計算</button>
-          <button class="btn primary" data-launch="pen_tip_twin" data-mode="go">存檔</button></div></div>
-      <div class="task-row"><div><b>筆尖 3D 校正:傾斜碰點 (舊,未完成)</b><div class="muted small">垂直點一個點 → 手臂傾斜 4 次,每次人工把筆尖對準那個點按 c → 算出筆尖相對手臂末端的位置。換筆或重夾後要重做</div></div>
-        <div class="row"><button class="btn primary" data-launch="pen_pivot" data-mode="go">執行</button></div></div>
+      <div class="task-row"><div><b>深度設定比較</b><div class="muted small">唯讀;用設定的板厚當真值,比較 5 組深度設定</div></div>
+        <div class="row"><button class="btn" data-launch="depth_compare" data-mode="dry">執行</button></div></div>
       <div class="task-row"><div><b>多視角立體重建</b><div class="muted small">手臂帶相機在物體上方與周圍逐點拍深度 → 合併成點雲、量尺寸 (任何形狀),結果在左邊「立體模型」視窗看。<b>不下筆</b>;筆尖一直比物體高 (設定在下方「多視角立體重建」)</div></div>
         <div class="row"><button class="btn" data-launch="scan3d" data-mode="dry">dry-run</button>
           <button class="btn primary" data-launch="scan3d" data-mode="go">執行</button></div></div>
-      <div class="task-row"><div><b>深度設定比較</b><div class="muted small">唯讀;用設定的板厚當真值,比較 5 組深度設定</div></div>
-        <div class="row"><button class="btn" data-launch="depth_compare" data-mode="dry">執行</button></div></div>
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>筆尖校正</h2></div>
-      <div class="kv" id="calib-kv"></div>
-      <div class="task-row"><div><b>護貝紙整張校正</b><div class="muted small">3×3 小十字、仿射 + 留一法</div></div>
-        <div class="row"><button class="btn" data-launch="sheet_calib" data-mode="dry">dry-run</button>
-          <button class="btn primary" data-launch="sheet_calib" data-mode="go">執行</button></div></div>
+      <div class="card-head"><h2>其他校正</h2></div>
       <div class="task-row"><div><b>快速校正</b><div class="muted small">工件上 ±step,旋轉+平移</div></div>
         <div class="row"><button class="btn" data-launch="quick_calib" data-mode="dry">dry-run</button>
           <button class="btn primary" data-launch="quick_calib" data-mode="go">執行</button></div></div>
       <div class="task-row"><div><b>畫圓驗證</b><div class="muted small">相機找十字 → 繞它畫圓 → 量圓心誤差。先 dry-run 看編號</div></div>
         <div class="row"><button class="btn" data-launch="verify_circle" data-mode="dry">dry-run</button>
           <button class="btn primary" data-launch="verify_circle" data-mode="go">執行</button></div></div>
+      <div class="task-row"><div><b>筆尖 3D 位置:分身算法 (建議,不動手臂)</b><div class="muted small">用手眼 (scan3d) + 護貝紙筆尖校正 + home 照片推出筆尖在手臂末端的位置,取代傾斜碰點。底面描繪會自動算,這裡只是查看數值,平常不用按</div></div>
+        <div class="row"><button class="btn" data-launch="pen_tip_twin" data-mode="dry">計算</button>
+          <button class="btn primary" data-launch="pen_tip_twin" data-mode="go">存檔</button></div></div>
+      <div class="task-row"><div><b>筆尖 3D 校正:傾斜碰點 (舊方法,不用做)</b><div class="muted small">垂直點一個點 → 手臂傾斜 4 次,每次人工把筆尖對準那個點按 c → 算出筆尖相對手臂末端的位置。換筆或重夾後要重做</div></div>
+        <div class="row"><button class="btn" data-launch="pen_pivot" data-mode="go">執行</button></div></div>
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>工件與任務設定</h2><span class="muted small" id="cfg-msg"></span></div>
-      <form id="cfg-form" class="form"></form>
-      <div class="row">
-        <button class="btn primary" id="btn-save-cfg">儲存設定</button>
+      <div class="card-head"><h2>立體模型</h2>
+        <select id="m3-run" title="有 model.ply 的紀錄 (多視角立體重建)"></select>
+        <button class="btn ghost small" id="m3-refresh">重新整理</button></div>
+      <div class="m3-wrap"><canvas id="m3-canvas"></canvas>
+        <div class="m3-hint">左鍵拖曳 旋轉 · 右鍵 / Shift+拖曳 平移 · 滾輪 縮放 · 雙擊 重設</div></div>
+      <div class="row m3-ctrl">
+        <button class="btn small" data-m3view="iso">斜視</button><button class="btn small" data-m3view="top">俯視</button>
+        <button class="btn small" data-m3view="front">正視</button><button class="btn small" data-m3view="side">側視</button>
+        <label class="chk"><input type="radio" name="m3-color" value="rgb" checked> 原色</label>
+        <label class="chk"><input type="radio" name="m3-color" value="height"> 高度色</label>
+        <label class="chk"><input type="checkbox" id="m3-obj"> 只顯示物體 (高於紙面 1.5 mm)</label>
+        <label class="chk">點大小 <input type="range" id="m3-size" min="1" max="8" step="0.5" value="2.5"></label>
       </div>
+      <div class="kv" id="m3-kv"></div>
+      <div class="muted small">綠框 = 頂面 (最高的平台)、橘框 = 底面外框;格線 10 mm;紅/綠/藍短線 = 紙面 x / y (往下) / 高度。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>除錯</h2></div>
       <div class="task-row"><div><b>其他工具</b></div>
         <div class="row"><button class="btn" data-launch="gripper_ctl" data-mode="dry">鍵盤控制夾爪</button>
           <button class="btn" data-launch="warp_sort" data-mode="dry">筆蓋分類 dry-run</button></div></div>
+      <div class="task-row"><div><b>送停止指令</b><div class="muted small">寫 0x0300=0。不會抬起、不能代替實體急停;一般請用 Ctrl+C</div></div>
+        <div class="row"><button class="btn danger ghost" id="btn-stop" title="寫 0x0300=0;只停住,不會抬起。實體急停才可靠">送出</button></div></div>
+      <div class="task-row"><div><b>強制結束任務程式</b><div class="muted small">手臂不會抬起,最後手段</div></div>
+        <div class="row"><button class="btn danger ghost" id="btn-kill">強制結束</button></div></div>
     </div>
-
-    <div class="card">
-      <div class="card-head"><h2>任務</h2></div>
-      <div id="task-box" class="small">—</div>
-      <div class="row"><button class="btn danger ghost" id="btn-kill">強制結束任務程式</button></div>
-      <p class="muted small">任務會在新的主控台視窗執行,請在那個視窗操作 (Enter / c / 空白鍵暫停 / Ctrl+C 回 home / o g 夾爪)。
-        會用相機的任務執行時,網頁會先釋放相機,結束後自動接回。</p>
     </div>
-  </aside>
+  </details>
 </main>
 
 <dialog id="dlg-run">
@@ -188,6 +252,7 @@
 
 <div id="toast"></div>
 <script src="/static/viewer3d.js"></script>
+<script src="/static/guide.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

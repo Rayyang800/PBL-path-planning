@@ -17,7 +17,7 @@
     (高度不受影響太多:d·(1-cos) < 0.3 mm,而且下筆還是人工確認接觸)
 
   python pen_tip_twin.py                 # 算、比較各手眼,不存
-  python pen_tip_twin.py --save          # 存成 calibrations/pen_tip (circle_trace --tilt-deg 會用)
+  python pen_tip_twin.py --save          # 存成 calibrations/pen_tip (只供查看;circle_trace 傾斜時自己即時算,不讀這份)
   python pen_tip_twin.py --pen-len 238 --save    # 用尺量的筆長 (法蘭面 -> 筆尖,mm) 取代手眼的 z
 """
 import argparse
@@ -43,6 +43,34 @@ def jload(*p):
 
 def R_xyz(a):
     return Rotation.from_euler("xyz", a, degrees=True).as_matrix()      # = Rz Ry Rx (手眼 conv 'xyz')
+
+
+def estimate(home_pnp, tcp, cal, hand_eyes_list, pen_len=None):
+    """這次的 home 照片 PnP + 護貝紙校正 -> 筆尖 p (法蘭座標)。circle_trace 傾斜時自動呼叫,不用先存檔。
+    同一天的手眼先平均,再讓各天等權 (11-11 有兩次,不該算兩票)。
+    回傳 dict(p, z_unc, z_source, by_day)。"""
+    A, t, z_touch = np.array(cal["A"], float), np.array(cal["t"], float), float(cal["z_touch"])
+    T, R = np.array(tcp[:3], float), R_xyz(tcp[3:])
+    s = float(np.mean(np.linalg.svd(A, compute_uv=False)))
+    C = np.asarray(home_pnp["C"], float)
+    cam_from_paper = np.array([*(A @ C[:2] + t), z_touch + s * (-C[2])])
+    days = {}
+    for he in hand_eyes_list:
+        p = R.T @ (T + R @ np.array(he["p_cam_in_tool_mm"], float) - cam_from_paper)
+        days.setdefault(he["run"][:8], []).append(p)
+    if not days:
+        raise ValueError("沒有手眼資料")
+    by_day = np.array([np.mean(v, axis=0) for v in days.values()])
+    p = by_day.mean(0)
+    z_unc, src = max(2.0, float(np.ptp(by_day[:, 2]) / 2)) if len(by_day) > 1 else 6.0, "手眼平均"
+    if pen_len:
+        if abs(pen_len - p[2]) > 20:
+            raise ValueError(f"尺量筆長 {pen_len:g} 和分身推算的 {p[2]:.1f} mm 差超過 20 mm,請再量一次")
+        p[2], z_unc, src = float(pen_len), 2.0, "尺量"
+    if not (30 < np.hypot(p[0], p[1]) < 100 and 180 < p[2] < 310):
+        raise ValueError(f"推算的筆尖位置不合理 {np.round(p, 1).tolist()},請重做護貝紙校正")
+    return {"p": p, "z_unc": float(z_unc), "z_source": src,
+            "by_day": {k: np.mean(v, axis=0).tolist() for k, v in days.items()}}
 
 
 def runs_with_home(created):

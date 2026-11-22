@@ -136,7 +136,7 @@ def main():
     import warp_pick as wp
     from drv_modbus import send, request
     from rs_capture import RSCamera
-    from pen_calibrate import Arm, Paused, ask
+    from pen_calibrate import MOVE_ERRORS, Arm, Paused, ask
     from pen_quick_calib import Quit, probe_with_nudge
 
     with open(args.layout, encoding="utf-8") as f:
@@ -387,7 +387,7 @@ def main():
                     print("  回到正上方拍照沒有完成,只用 home 照片分析:", e)
             arm.move(*home[:3], ori=home[3:])
             status, res = "ok", {"points_done": done, "dz_mm": dz, "shift_robot_mm": shift.tolist()}
-        except (Quit, Paused, KeyboardInterrupt) as e:
+        except (Quit, Paused, KeyboardInterrupt) + MOVE_ERRORS as e:
             print("\n停止:", e, "-> 垂直抬起回 home")
             status, res = "aborted", {"reason": str(e)}
             try:

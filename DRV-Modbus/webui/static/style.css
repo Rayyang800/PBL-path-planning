@@ -96,3 +96,55 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 6px; border: 1px solid
 .m3-hint { position: absolute; left: 10px; bottom: 8px; color: #9fb0b8; font-size: 12px; pointer-events: none; }
 .m3-ctrl { flex-wrap: wrap; gap: 8px; margin-top: 8px; align-items: center; }
 #m3-run { max-width: 340px; }
+
+/* 主要操作 / 圖解 / 進階 */
+[hidden] { display: none !important; }
+.estop { font-size: 12.5px; color: var(--bad); }
+.gap-top { margin-top: 8px; }
+.row.tight { margin-top: 0; }
+details > summary { cursor: pointer; }
+details > summary .muted { margin-left: 10px; }
+.works { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.work { border: 1px solid var(--border); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.work-art svg { display: block; width: 100%; max-height: 130px; }
+.work-name { font-weight: 700; font-size: 15px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.work-btns { display: flex; gap: 6px; margin-top: auto; padding-top: 6px; flex-wrap: wrap; }
+.work-btns .btn { padding: 6px 10px; }
+.work-btns .primary { flex: 1; font-weight: 700; }
+.tag-untested { font-size: 11px; font-weight: 400; padding: 0 7px; border-radius: 9px; background: var(--warn-bg); color: var(--warn); }
+.guide-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 8px; }
+.guide-tabs button { font: inherit; color: var(--text); background: transparent; border: 1px solid var(--border); border-radius: 7px; padding: 4px 11px; cursor: pointer; }
+.guide-tabs button.active { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.guide-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.g-step { min-width: 0; }
+.g-art { border: 1px solid var(--border); border-radius: 7px; background: var(--bg); }
+.g-art svg { display: block; width: 100%; }
+.g-title { font-weight: 700; margin: 5px 0 2px; }
+.g-num { display: inline-block; width: 20px; height: 20px; line-height: 20px; margin-right: 6px; border-radius: 50%; background: var(--accent); color: var(--card); text-align: center; font-size: 12px; }
+.guide-foot { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.advanced { grid-column: 1 / -1; }
+.advanced > summary { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 11px 14px; }
+.adv-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; align-items: start; }
+.adv-wide { grid-column: 1 / -1; }
+.form.wide { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.g-paper { fill: #fafafa; stroke: #b6bcc2; }
+.g-tag { fill: #24292d; }
+.g-obj { fill: #8b979e; stroke: #46525a; }
+.g-obj2 { fill: #a9b4ba; stroke: #46525a; }
+.g-path { fill: none; stroke: #e0218a; stroke-width: 4; stroke-linecap: round; }
+.g-floor { stroke: var(--muted); stroke-width: 2; }
+.g-pen { fill: #d63b3b; }
+.g-grip { fill: #b9c0c5; stroke: #68737a; }
+.g-arrow { fill: none; stroke: var(--accent); stroke-width: 3; }
+.g-head { fill: var(--accent); }
+.g-btn { fill: var(--card); stroke: var(--muted); }
+.g-btn-p { fill: var(--accent); }
+.g-key { fill: var(--card); stroke: var(--muted); stroke-width: 1.5; }
+.g-console { fill: #1c2429; }
+.g-t { fill: var(--text); font-size: 12px; }
+.g-t-inv { fill: var(--card); font-size: 12px; font-weight: 700; }
+.g-t-con { fill: #d5dee2; font-size: 11.5px; }
+.g-ok { fill: #15803d; }
+.g-tick { fill: none; stroke: #fff; stroke-width: 3; }
+@media (max-width: 1400px) { .works { grid-template-columns: repeat(2, minmax(0, 1fr)); } .guide-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .works, .guide-steps, .adv-grid, .form.wide { grid-template-columns: minmax(0, 1fr); } }

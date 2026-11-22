@@ -22,7 +22,7 @@
 
   python pen_pivot.py --go
   python pen_pivot.py --go --tilt 15 --approach 30
-按鍵:Enter 往下 / 數字 改步距 / u 往上 / x 2、y -3 水平微調 / c 對準了 / q 結束;Ctrl+C = 中止，現場確認姿態
+按鍵:Enter 往下 / 數字 改步距 / u 往上 / x 2、y -3 水平微調 / c 對準了 / q 結束;Ctrl+C = 停止 -> 抬起回 home
 """
 import argparse
 import json
@@ -247,9 +247,7 @@ def main():
                     print(f"  目前估計:筆尖在工具座標 {np.round(p_est, 1).tolist()} mm,殘差 {rms:.2f} mm")
             arm.move(*home[:3], ori=home[3:])
             completed = True
-        except (Paused, KeyboardInterrupt, ConnectionError, send.CommandIgnored, TimeoutError) as e:
-            print("校正已中斷，請現場確認姿態與手臂狀態:", e)
-        except Quit as e:
+        except (Quit, Paused, KeyboardInterrupt, ConnectionError, send.CommandIgnored, TimeoutError) as e:
             print("\n停止:", e, "-> 抬起回 home")
             try:
                 p_ = read_pose(c)

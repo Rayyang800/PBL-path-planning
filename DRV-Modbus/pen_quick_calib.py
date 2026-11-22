@@ -71,9 +71,10 @@ def parse_nudge(s):
     return m.group(1), float(m.group(2))
 
 
-def probe_with_nudge(arm, x, y, z, step, z_floor, z_safe, paper_A=None):
+def probe_with_nudge(arm, x, y, z, step, z_floor, z_safe, paper_A=None, allow=None):
     """人工下降 + 水平微調。回傳 (x, y, z_touch)。
-    paper_A:筆尖校正的 A (紙面 -> 手臂 XY 2x2);給了就可以用 w/a/s/d 依校正紙方向微調。"""
+    paper_A:筆尖校正的 A (紙面 -> 手臂 XY 2x2);給了就可以用 w/a/s/d 依校正紙方向微調。
+    allow(x, y, z):給了就先問能不能去 (傾斜描繪:微調不能讓工具撞到工件)。"""
     print(PROBE_HELP)
     if paper_A is not None:
         print(PAPER_HELP)
@@ -103,6 +104,9 @@ def probe_with_nudge(arm, x, y, z, step, z_floor, z_safe, paper_A=None):
                 vp = {"w": (0.0, -1.0), "s": (0.0, 1.0), "a": (-1.0, 0.0), "d": (1.0, 0.0)}[ax]
                 v = np.asarray(paper_A, float) @ np.array(vp)
                 dx, dy = v / np.linalg.norm(v) * d
+            if allow is not None and not allow(x + dx, y + dy, z):
+                print("    拒絕:往這個方向微調,工具會太靠近工件 / 手臂到不了")
+                continue
             if z < z_safe - 1:
                 arm.move(x, y, z + 2.0)            # 先離開紙面 2 mm 再水平移,避免拖出一條線
             x, y = x + dx, y + dy

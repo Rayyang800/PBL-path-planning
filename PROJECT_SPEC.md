@@ -255,8 +255,8 @@
 
 - `ridge_trace.py` 連續描繪直線脊線，`ridge_check.py` 由前後照片量偏差與涵蓋率。灰色工件實測耗時 4–5 秒，平均偏差 0.66–1.06 mm。
 - `circle_rim.py` 以深度擬圓、彩色邊緣修正圓心，`circle_trace.py` 沿罐頭捲邊描繪並量徑向偏差。`pen_offset.py` 從筆跡學習水平補償。
-- `pen_pivot.py` 以同一紙面接觸點的多個姿態估計筆尖。預設紙面點 (148,185) mm、傾角 12°、轉動高度 100 mm。先取 x、y 兩個方向，姿態或殘差未達門檻時繼續沿用前一次估計。
-- 傾斜圓描繪在 CLI 或 Web UI 指定夾爪、相機兩個實測上界（`--gripper-reach`、`--camera-reach`）。量 TCP 到各自最遠外緣的直線距離，涵蓋張開的爪指、支架及突出部位。程式用以 TCP 為球心的包覆球，要求最低外緣全程高於估計工件頂面 15 mm。此保守模型可能拒絕原本可行的路徑。
+- 傾斜描繪 (11-22 起):筆尖 3D 位置由 `pen_tip_twin.estimate()` 用護貝紙校正、home 照片與分身手眼即時推算;`pen_pivot.py` (傾斜碰點) 停用,只留程式。
+- `twin_check.py` + `tilt_plan.py` 在動之前檢查可達性、關節餘裕、奇異點、工具包絡 (照片估計,見 `twin_model.json`) 與每一點的中止路徑;換姿態一律繞筆尖轉,傾斜時先空走一圈。只開放 5~20 度 (25 度實測資料回放時不通過)。
 
 
 所有路徑相對於 `C:\Users\ray20\Desktop\Delta_Arm\DRV-Modbus\`。執行前:`conda activate delta_arm` 並 `cd` 到該資料夾。
@@ -439,9 +439,9 @@ python go_home.py --speed 10
 
 11-18 實機驗收仍待完成
 
-- 在同一次裝夾、同一紙面標記取得全部五個接觸姿態（垂直、X+、Y−、X−、Y+）。確認 `calibrations/pen_tip/latest.json` 的殘差及姿態多樣性通過程式門檻。
-- 記錄夾爪與相機的實測包覆尺寸，再檢視傾斜路徑預覽與 `housing_clearance` 事件。實際控制器軌跡、關節可達性與其他障礙物仍需現場確認。
-- 現場分別驗證 MovP 和 MovL 收到 Motion Stop 的效果，保留位姿與旗標紀錄。實體急停須可立即操作。
+- 罐頭底面 (傾斜 15 度) 第一次上機:先看預覽與執行前檢查,空走一圈確認夾爪、相機、線材淨空,再下降。
+- 用尺核對 `twin_model.json` 的工具包絡與筆長;分身不知道輸送帶、鋁架與線材。
+- 連續運動 (`smooth_motion.py`) 第一次上機:先設定控制器 (third_party/deltaarm_smooth/SOURCE.md),低速、空走驗證速度與轉角。
 
 
 分類:`[唯讀]` 不會動設備;`[動作]` 需使用者同意並在場。建議順序:T01 → T02 → T05 → T08 → …
