@@ -1,0 +1,21 @@
+{
+  "schema": 2,
+  "name": "pen_xy_offset",
+  "created": "2026-11-25T09:10:01+08:00",
+  "source_run": "C:\\Users\\ray20\\Desktop\\Delta_Arm\\DRV-Modbus\\runs\\20261125-090740_ridge_trace",
+  "supersedes": "20261125-090454.json",
+  "notes": "筆跡回饋分析自動記錄",
+  "data": {
+    "n": [
+      [
+        -0.9999568742172817,
+        -0.009287071960709605
+      ]
+    ],
+    "b": [
+      -0.9548970022924164
+    ],
+    "kind": "ridge",
+    "coverage": 0.9183673469387755
+  }
+}

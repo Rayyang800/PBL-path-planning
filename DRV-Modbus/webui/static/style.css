@@ -148,3 +148,10 @@ details > summary .muted { margin-left: 10px; }
 .g-tick { fill: none; stroke: #fff; stroke-width: 3; }
 @media (max-width: 1400px) { .works { grid-template-columns: repeat(2, minmax(0, 1fr)); } .guide-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 700px) { .works, .guide-steps, .adv-grid, .form.wide { grid-template-columns: minmax(0, 1fr); } }
+
+/* 自動判斷 */
+.classify { border-radius: 8px; padding: 9px 12px; margin-bottom: 10px; background: var(--bg); border: 1px solid var(--border); }
+.classify.ok { background: var(--ok-bg); border-color: transparent; }
+.classify.warn { background: var(--warn-bg); border-color: transparent; }
+.classify .row { margin-top: 6px; }
+.work.picked { border-color: var(--ok); box-shadow: 0 0 0 2px var(--ok-bg); }

@@ -32,8 +32,11 @@ def record(n_list, b_list, applied, kind, run=None, extra=None):
     return True
 
 
-def learned(n_last=8):
-    """回傳 (o (2,), 說明, 筆數)。資料不夠 (某方向沒有約束) 時該方向給 0。"""
+def learned(kind=None, n_last=8):
+    """回傳 (o (2,), 說明, 筆數)。資料不夠 (某方向沒有約束) 時該方向給 0。
+    kind:只用同一種工件的紀錄 ("ridge" / "seam" / "circle")。11-25:同一個紙面方向上,縫合的偏差是 -1.1 mm、
+    脊線是 +0.9 mm,方向相反 -> 不是單純的筆尖偏移,而是每種工件各自的系統偏差 (量測基準不同);
+    混在一起平均時,脊線學到的修正把縫合多推了約 0.9 mm。"""
     st = CalibrationStore()
     N, B, k = [], [], 0
     for p_ in reversed(st.history(NAME)):
@@ -42,21 +45,25 @@ def learned(n_last=8):
                 d = json.load(f)["data"]
         except (OSError, ValueError, KeyError):
             continue
+        if kind is not None and d.get("kind") != kind:
+            continue
         N += d["n"]
         B += d["b"]
         k += 1
         if k >= n_last:
             break
     if not N:
-        return np.zeros(2), "沒有回饋紀錄,不修正", 0
+        return np.zeros(2), "沒有這種工件的回饋紀錄,不修正", 0
     N, B = np.array(N), np.array(B)
-    o, *_ = np.linalg.lstsq(N, B, rcond=None)
+    # rcond 0.3:只有一個方向有資料時 (直線工件),另一個方向的奇異值很小,直接當 0,
+    # 只沿有資料的方向修正;不然 n 的微小分量會把另一個方向放大成好幾 mm
+    o, *_ = np.linalg.lstsq(N, B, rcond=0.3)
     sv = np.linalg.svd(N, compute_uv=False)
     if len(sv) < 2 or sv[-1] < 0.3 * sv[0]:
         # 只有一個方向的資料 (例如只有脊線):只修那個方向 (最小範數解本來就是這樣)
-        note = f"最近 {k} 筆回饋 (只有一個方向有資料)"
+        note = f"最近 {k} 筆{kind or ''}回饋 (只有一個方向有資料)"
     else:
-        note = f"最近 {k} 筆回饋"
+        note = f"最近 {k} 筆{kind or ''}回饋"
     if np.linalg.norm(o) > MAX_ABS:
         return np.zeros(2), "回饋算出的偏移太大,不修正", k
     return o, note, k

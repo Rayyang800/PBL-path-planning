@@ -263,7 +263,7 @@ def main():
                   f"x {gain:.3f} = {draw_line[:, 2].mean():.2f} mm (增益:{gain_src})")
             path3 = ridge.path_along(draw_line.tolist(), args.step_mm, args.reverse)        # 紙面 [x, y, h]
             raw_start_h = float(ridge.path_along(raw_line.tolist(), args.step_mm, args.reverse)[0][2])
-            o_pen, o_note, _ = (np.zeros(2), "已關閉", 0) if args.no_pen_offset else pen_offset.learned()
+            o_pen, o_note, _ = (np.zeros(2), "已關閉", 0) if args.no_pen_offset else pen_offset.learned("ridge")
             if np.any(o_pen != 0):
                 print(f"  筆尖偏移修正 ({o_note}):路徑移 ({-o_pen[0]:+.2f}, {-o_pen[1]:+.2f}) mm")
             path_robot = np.array([[*(A @ (p[:2] - o_pen) + tcal), z_touch + p[2]] for p in path3])

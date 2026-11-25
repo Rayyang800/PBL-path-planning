@@ -64,8 +64,9 @@ def estimate(home_pnp, tcp, cal, hand_eyes_list, pen_len=None):
     p = by_day.mean(0)
     z_unc, src = max(2.0, float(np.ptp(by_day[:, 2]) / 2)) if len(by_day) > 1 else 6.0, "手眼平均"
     if pen_len:
+        # 11-25:分身推的筆長 (手眼的相機高度定不準) 比實際短約 40 mm;只提醒,以尺量為準
         if abs(pen_len - p[2]) > 20:
-            raise ValueError(f"尺量筆長 {pen_len:g} 和分身推算的 {p[2]:.1f} mm 差超過 20 mm,請再量一次")
+            print(f"  注意:尺量筆長 {pen_len:g} 和分身推算的 {p[2]:.1f} mm 差 {pen_len - p[2]:+.0f} mm,以尺量為準 (分身的筆長不可靠)")
         p[2], z_unc, src = float(pen_len), 2.0, "尺量"
     if not (30 < np.hypot(p[0], p[1]) < 100 and 180 < p[2] < 310):
         raise ValueError(f"推算的筆尖位置不合理 {np.round(p, 1).tolist()},請重做護貝紙校正")

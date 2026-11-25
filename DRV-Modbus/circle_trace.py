@@ -145,7 +145,10 @@ def main():
                     help="筆往圓心外傾斜幾度 (5~20);0 = 垂直。預設:rim 0、bottom 15")
     ap.add_argument("--bottom-offset", type=float, default=None,
                     help="底面模式:筆尖中心離罐壁 mm (不能比分身算的最小值小;預設 = 最小值)")
-    ap.add_argument("--pen-len", type=float, default=None, help="尺量筆長:法蘭面到筆尖 mm (不給 = 分身推算)")
+    ap.add_argument("--pen-len", type=float, default=None,
+                    help="尺量筆長:法蘭面到筆尖 mm (筆垂直時)。傾斜描繪一定要給:11-25 實機分身推算短了約 40 mm,筆跡往內偏 11 mm")
+    ap.add_argument("--air-lift", type=float, default=None,
+                    help="空走一圈時筆尖比描繪高幾 mm (預設 20)。拿掉罐頭、設 3 可以看筆尖和紙的距離是否整圈一樣")
     ap.add_argument("--smooth", action="store_true", help="連續運動 (控制器要先裝 loader,見 smooth_motion.py)")
     ap.add_argument("--tilt-in", action="store_true", help="改成往圓心內傾斜 (筆身往內倒)")
     ap.add_argument("--start-deg", type=float, default=None, help="起點角度 (紙面座標;預設 = 離 home 最近的方向)")
@@ -167,6 +170,11 @@ def main():
         ap.error("底面外圍一定要傾斜 (垂直時夾爪和筆身的檢查不在這個流程裡)")
     if not np.isfinite(args.approach) or args.approach < 0:
         ap.error("接近高度必須是有限的非負數")
+    if args.tilt_deg > 0 and not args.pen_len:
+        ap.error("傾斜描繪要先用尺量筆長 (法蘭面到筆尖,筆垂直),填 --pen-len / 網頁進階設定「尺量筆長」。\n"
+                 "11-25 實機:分身推算的筆長短了約 40 mm,筆尖整圈往罐頭內偏 11 mm、差點壓壞筆")
+    if args.air_lift is not None and not 2.0 <= args.air_lift <= 60.0:
+        ap.error("--air-lift 需在 2~60 mm")
     if args.tilt_deg > 0:
         args.speed = min(args.speed, 8)                 # 傾斜還沒上機驗證:限速
     import smooth_motion
@@ -302,7 +310,7 @@ def main():
             else:
                 start_deg = args.start_deg
             h_path = 0.0 if args.target == "bottom" else h_draw
-            o_pen, o_note, _ = (np.zeros(2), "已關閉", 0) if args.no_pen_offset else pen_offset.learned()
+            o_pen, o_note, _ = (np.zeros(2), "已關閉", 0) if args.no_pen_offset else pen_offset.learned("circle")
             if np.any(o_pen != 0):
                 print(f"  筆尖偏移修正 ({o_note}):路徑移 ({-o_pen[0]:+.2f}, {-o_pen[1]:+.2f}) mm")
 
@@ -322,7 +330,8 @@ def main():
                         r_draw = rim["r_outer"] + offset
                     tp.set_path(make_path(r_draw), o_pen, args.target)
                     print("  分身執行前檢查中 (可達、關節、奇異點、碰撞、每一點的中止路徑) ...")
-                    precheck = tp.verify(start=list(__import__("pen_pivot").read_pose(c)) if args.go else None)
+                    precheck = tp.verify(start=list(__import__("pen_pivot").read_pose(c)) if args.go else None,
+                                         air_lift=args.air_lift)
                 except tilt_plan.PlanError as e:
                     print("  分身執行前檢查:不通過 ->", e)
                     log.event("precheck", ok=False, reason=str(e))
@@ -397,9 +406,11 @@ def main():
             allow = None
             if tilted:
                 above, up = tp.entry()
-                air = [[p[0], p[1], p[2] + tilt_plan.AIR_LIFT] + p[3:] for p in tp.draw]
+                lift = tilt_plan.AIR_LIFT if args.air_lift is None else args.air_lift
+                air = [[p[0], p[1], p[2] + lift] + p[3:] for p in tp.draw]
                 ask(f"\n確認洋紅圓位置 (circle_trace_plan.png)、工件和校正紙沒動、周圍沒有其他東西,手放急停旁。\n"
-                    f"按 Enter:移到起點上方、繞筆尖傾斜 {args.tilt_deg:g} 度,先在高 {tilt_plan.AIR_LIFT:g} mm 處空走一圈 (不碰工件) ")
+                    f"按 Enter:移到起點上方、繞筆尖傾斜 {args.tilt_deg:g} 度,先在高 {lift:g} mm 處空走一圈 (不碰工件)。"
+                    f"筆尖和紙的距離整圈都應該差不多是 {lift:g} mm,不是就按 Ctrl+C ")
                 arm.move(*above[:3], ori=list(home[3:]))
                 arm.move(*up[:3], ori=up[3:])
                 arm.ori = list(up[3:])
@@ -451,7 +462,7 @@ def main():
             draw6 = [list(map(float, p)) + list(o) for p, o in zip(path_draw, oris)]
             if tilted:
                 try:
-                    tp.verify(draw6)                    # 微調 + 接觸高度之後再檢查一次
+                    tp.verify(draw6, air_lift=args.air_lift)    # 微調 + 接觸高度之後再檢查一次
                 except tilt_plan.PlanError as e:
                     raise Quit(f"微調後的路徑沒通過檢查:{e}")
             # ---------- 描繪 ----------

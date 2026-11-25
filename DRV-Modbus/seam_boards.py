@@ -147,7 +147,10 @@ def touching_seam(frame, pf, board, board_h_mm=0.0, step_mm=2.0, ppm=4.0, margin
     core = rect[m + int(ppm):H - m - int(ppm), m + int(ppm):W - m - int(ppm)]
     if core.shape[0] < 20 or core.shape[1] < 20:
         return {"ok": False, "reason": "板子太小"}
-    best = None
+    # 11-25:縫的暗線很淡 (灰階 64 -> 54) 時,旁邊膠帶邊緣的亮線分數更高,只看「最高分」會選到膠帶邊,
+    # 接著連續度只有 ~34% 而判定沒有縫。現在每個 (軸向、明暗) 保留分數前幾名、彼此相隔 >= 3 mm 的候選,
+    # 逐一檢查是否貫穿整片 (連續度 >= 70%),在貫穿的候選裡選分數最高的。
+    cands = []
     for axis in (0, 1):                                              # 0: 縫沿影像 y (找列剖面);1: 縫沿影像 x
         img = core if axis == 0 else core.T
         h, w = img.shape
@@ -167,43 +170,65 @@ def touching_seam(frame, pf, board, board_h_mm=0.0, step_mm=2.0, ppm=4.0, margin
                         continue
                     c = sign * (np.median(side) - prof[x])
                     noise = np.std(np.diff(side)) / np.sqrt(2) + 1e-3
-                    score = c / noise
-                    if best is None or score > best["score"]:
-                        best = {"score": float(score), "contrast": float(c), "axis": axis, "tilt": float(tilt), "x": x,
-                                "sign": sign, "w": w, "h": h}
-    if best is None or best["contrast"] < min_contrast or best["score"] < min_score:
-        return {"ok": False, "reason": f"看不到貼合的縫 (最明顯的線對比 {best['contrast'] if best else 0:.1f} 灰階、"
-                                       f"信噪比 {best['score'] if best else 0:.1f};需要 ≥ {min_contrast:g} / ≥ {min_score:g})",
+                    cands.append({"score": float(c / noise), "contrast": float(c), "axis": axis, "tilt": float(tilt),
+                                  "x": x, "sign": sign, "w": w, "h": h})
+    if not cands:
+        return {"ok": False, "reason": "板子太小"}
+
+    def refine(cand):
+        img = core if cand["axis"] == 0 else core.T
+        h, w = img.shape
+        seg = max(2, int(step_mm * ppm))
+        pts, seg_contrast = [], []
+        win = int(5 * ppm)
+        for y0 in range(0, h - seg + 1, seg):
+            yc = y0 + seg / 2
+            x_line = cand["x"] + np.tan(np.radians(cand["tilt"])) * (yc - h / 2)
+            a, b = int(max(1, x_line - 2 * ppm)), int(min(w - 2, x_line + 2 * ppm))
+            if b - a < 3:
+                continue
+            row = img[y0:y0 + seg].mean(0) * cand["sign"]
+            xl = int(round(x_line))
+            side = np.r_[row[max(0, xl - 3 * win):max(0, xl - win // 2)], row[xl + win // 2:xl + 3 * win]]
+            p = img[y0:y0 + seg, a:b + 1].mean(0) * cand["sign"]
+            k = int(np.argmin(p))
+            seg_contrast.append(float(np.median(side) - p[k]) if len(side) else 0.0)
+            if 0 < k < len(p) - 1:
+                den = p[k - 1] - 2 * p[k] + p[k + 1]
+                k = k + (0.5 * (p[k - 1] - p[k + 1]) / den if abs(den) > 1e-6 else 0.0)
+            pts.append((a + k, yc))
+        cont = float(np.mean(np.array(seg_contrast) >= min_contrast * 0.5)) if seg_contrast else 0.0
+        return np.array(pts, float), cont
+
+    picked = []
+    for axis in (0, 1):
+        for sign in (1, -1):
+            group = sorted((c for c in cands if c["axis"] == axis and c["sign"] == sign and c["contrast"] >= min_contrast
+                            and c["score"] >= min_score), key=lambda c: -c["score"])
+            kept = []
+            for c in group:
+                if all(abs(c["x"] - k_["x"]) >= 3 * ppm for k_ in kept):
+                    kept.append(c)
+                if len(kept) >= 4:
+                    break
+            picked += kept
+    tried = []
+    for c in picked:
+        pts_c, cont = refine(c)
+        tried.append((cont, c["sign"] == 1, c["score"], pts_c, c))
+    good = [t for t in tried if t[0] >= 0.7 and len(t[3]) >= 5]
+    if not good:
+        best = max(cands, key=lambda c: c["score"])
+        if best["contrast"] < min_contrast or best["score"] < min_score:
+            return {"ok": False, "reason": f"看不到貼合的縫 (最明顯的線對比 {best['contrast']:.1f} 灰階、"
+                                           f"信噪比 {best['score']:.1f};需要 ≥ {min_contrast:g} / ≥ {min_score:g})",
+                    "touch_best": best}
+        cont = max([t[0] for t in tried], default=0.0)
+        return {"ok": False, "reason": f"候選線最多只有 {cont * 100:.0f}% 的長度看得到 (需要 ≥ 70%),不像一條貫穿的縫",
                 "touch_best": best}
-    # 分段細修:每 step_mm 一段,在粗線 ±2 mm 內找極值 (拋物線內插)
+    continuity, _, _, pts, best = max(good, key=lambda t: t[2])       # 貫穿的候選裡分數最高的 (以前找得到的不變)
     img = core if best["axis"] == 0 else core.T
     h, w = img.shape
-    seg = max(2, int(step_mm * ppm))
-    pts, seg_contrast = [], []
-    win = int(5 * ppm)
-    for y0 in range(0, h - seg + 1, seg):
-        yc = y0 + seg / 2
-        x_line = best["x"] + np.tan(np.radians(best["tilt"])) * (yc - h / 2)
-        a, b = int(max(1, x_line - 2 * ppm)), int(min(w - 2, x_line + 2 * ppm))
-        if b - a < 3:
-            continue
-        row = img[y0:y0 + seg].mean(0) * best["sign"]
-        xl = int(round(x_line))
-        side = np.r_[row[max(0, xl - 3 * win):max(0, xl - win // 2)], row[xl + win // 2:xl + 3 * win]]
-        p = img[y0:y0 + seg, a:b + 1].mean(0) * best["sign"]
-        k = int(np.argmin(p))
-        seg_contrast.append(float(np.median(side) - p[k]) if len(side) else 0.0)
-        if 0 < k < len(p) - 1:
-            den = p[k - 1] - 2 * p[k] + p[k + 1]
-            k = k + (0.5 * (p[k - 1] - p[k + 1]) / den if abs(den) > 1e-6 else 0.0)
-        pts.append((a + k, yc))
-    pts = np.array(pts, float)
-    if len(pts) < 5:
-        return {"ok": False, "reason": "貼合縫太短"}
-    continuity = float(np.mean(np.array(seg_contrast) >= min_contrast * 0.5))
-    if continuity < 0.7:                                             # 只有一小段有變化 (例如板子錯開的白紙缺口、刮痕) 不算縫
-        return {"ok": False, "reason": f"候選線只有 {continuity * 100:.0f}% 的長度看得到 (需要 ≥ 70%),不像一條貫穿的縫",
-                "touch_best": best}
     # 直線擬合 + 去除離群 (筆跡、刮痕) 後重擬
     for _ in range(2):
         A = np.c_[pts[:, 1], np.ones(len(pts))]

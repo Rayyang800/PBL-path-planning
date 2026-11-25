@@ -1,9 +1,9 @@
 {
   "schema": 2,
   "name": "pen_xy_offset",
-  "created": "2026-11-18T15:46:37+08:00",
-  "source_run": "runs/20261118-153603_circle_trace",
-  "supersedes": "20261118-154618.json",
+  "created": "2026-11-25T09:16:05+08:00",
+  "source_run": "C:\\Users\\ray20\\Desktop\\Delta_Arm\\DRV-Modbus\\runs\\20261125-091226_circle_trace",
+  "supersedes": "20261125-091001.json",
   "notes": "筆跡回饋分析自動記錄",
   "data": {
     "n": [
@@ -17,11 +17,10 @@
       ]
     ],
     "b": [
-      1.1990238973723137,
-      -1.1726947604572189
+      1.3398725939716374,
+      0.04545957067499773
     ],
     "kind": "circle",
-    "backfill": true,
-    "coverage": 0.5416666666666666
+    "coverage": 1.0
   }
 }

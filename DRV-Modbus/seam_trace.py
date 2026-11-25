@@ -56,9 +56,18 @@ DEPTH_CACHE = {}          # estimate_thickness 算出的高度圖 (H, pf),給深
 
 def choose_seam(source, color_res, depth_res, max_diff_mm=1.5):
     """依 --seam-source 選縫。回傳 (seam 紙面 mm 或 None, 說明)。
-    auto:影像縫為主 (較精準 ~0.3 mm),深度縫獨立確認;影像找不到時用深度縫 (~±1 mm)。"""
+    auto:影像縫為主 (較精準 ~0.3 mm),深度縫獨立確認。影像找不到時「不」自動改用深度縫:
+    11-25 兩次實機深度縫離真正的縫 8.2 mm / 3.8 mm (原本寫的 ±1 mm 不成立),筆畫在板子上。
+    真的要用深度縫:--seam-source depth (網頁設定「縫的來源 = 只用深度」)。"""
     c_ok, d_ok = bool(color_res and color_res.get("ok")), bool(depth_res and depth_res.get("ok"))
     msg = []
+    if source == "auto":
+        # 11-25 起縫的位置只用彩色影像:深度只看到細細一條凹陷,同一批照片和影像縫差 4~9 mm。
+        # 深度縫仍會算、存在紀錄 (plan.json 的 depth_seam),但不參與判斷、不印比較。深度只用來估板厚 (下降高度)。
+        if c_ok:
+            return np.asarray(color_res["seam_paper_mm"], float), "使用影像縫 (縫的位置只用彩色影像)"
+        return None, ("影像找不到縫 (縫的位置只用彩色影像)。請看預覽圖:兩板之間要看得到一條暗線;"
+                      "貼得太緊看不到時,中間留 1~2 mm 縫")
     if c_ok and d_ok:
         off, ang = depth_height.line_offset(color_res["seam_paper_mm"], depth_res["seam_paper_mm"])
         msg.append(f"影像縫與深度縫:側向差 {off:+.2f} mm、夾角 {ang:.2f} 度")
@@ -75,7 +84,8 @@ def choose_seam(source, color_res, depth_res, max_diff_mm=1.5):
         return np.asarray(color_res["seam_paper_mm"], float), \
             "使用影像縫" + ("" if d_ok else " (深度沒找到縫,無法交叉確認)") + note
     if d_ok:
-        return np.asarray(depth_res["seam_paper_mm"], float), "影像找不到縫 -> 改用深度縫 (凹陷 %.2f mm,精度約 ±1 mm)" % depth_res["dip_mm"]
+        return None, ("影像找不到縫。深度有找到一條 (凹陷 %.2f mm),但深度縫實測可能偏 4~8 mm,不自動使用。"
+                      "請看預覽圖;確定要用深度縫時把「縫的來源」設成只用深度" % depth_res["dip_mm"])
     return None, "影像與深度都找不到縫"
 
 
@@ -190,7 +200,7 @@ def plan_from(color, snap, info, pf, args, A, tcal, z_paper, close=False):
     if args.reverse:
         seam = seam[::-1]
     # 筆跡回饋學到的筆尖水平偏移 (紙面 mm):路徑先減掉,筆跡就落在縫上 (同 ridge_trace)
-    o_pen, o_note, _ = (np.zeros(2), "已關閉", 0) if args.no_pen_offset else pen_offset.learned()
+    o_pen, o_note, _ = (np.zeros(2), "已關閉", 0) if args.no_pen_offset else pen_offset.learned("seam")
     if np.any(o_pen != 0) and not close:
         print(f"筆尖偏移修正 ({o_note}):路徑移 ({-o_pen[0]:+.2f}, {-o_pen[1]:+.2f}) mm")
     path = (seam - o_pen) @ A.T + tcal
@@ -418,6 +428,9 @@ def main():
         after = grab()
         log.save_snapshot("home_after", LAST_GRAB["snap"], LAST_GRAB["info"])
         r = analyze_trace(color, after, args.layout, seam, board_h)
+        if res.get("mode") == "depth":
+            # 縫本身是深度找的 (可能偏好幾 mm):筆跡離它多遠不代表離真正的縫多遠,不能當成精度,也不學偏移
+            r = dict(r, reference="depth_seam_unverified")
         log.save_json("trace_result", r)
         view2 = after.copy()
         pf2 = PaperFrame(layout=args.layout)
@@ -425,8 +438,11 @@ def main():
             cv2.polylines(view2, [np.int32(pf2.paper_to_pix(seam, board_h))], False, (0, 120, 255), 1)
         log.save_image("trace_overlay.jpg", view2)
         print("\n" + summarize(r))
+        if r.get("reference") == "depth_seam_unverified":
+            print("  注意:這次的縫是深度找的,上面的偏差只是「離深度縫多遠」,不是離真正的縫多遠;請目視確認")
         # 筆跡回饋:縫法向的整體偏移 -> 記錄,下次自動修正 (涵蓋率夠才信)
-        if r.get("ok") and r.get("coverage", 0) >= 0.6 and np.isfinite(r.get("offset_mm", np.nan)):
+        if r.get("ok") and r.get("reference") != "depth_seam_unverified" and r.get("coverage", 0) >= 0.6 \
+                and np.isfinite(r.get("offset_mm", np.nan)):
             S_ = np.asarray(seam, float)
             u_ = (S_[-1] - S_[0]) / max(np.linalg.norm(S_[-1] - S_[0]), 1e-9)
             if pen_offset.record([[-u_[1], u_[0]]], [r["offset_mm"]], o_pen, "seam", run=log.path,

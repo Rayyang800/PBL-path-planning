@@ -1,0 +1,21 @@
+{
+  "schema": 2,
+  "name": "pen_xy_offset",
+  "created": "2026-11-25T07:58:07+08:00",
+  "source_run": "C:\\Users\\ray20\\Desktop\\Delta_Arm\\DRV-Modbus\\runs\\20261125-075547_seam_trace",
+  "supersedes": "20261125-074425.json",
+  "notes": "筆跡回饋分析自動記錄",
+  "data": {
+    "n": [
+      [
+        -0.9999954664037731,
+        0.0030111745051233465
+      ]
+    ],
+    "b": [
+      1.06189719552873
+    ],
+    "kind": "seam",
+    "coverage": 1.0
+  }
+}

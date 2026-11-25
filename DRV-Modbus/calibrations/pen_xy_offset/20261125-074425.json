@@ -1,0 +1,26 @@
+{
+  "schema": 2,
+  "name": "pen_xy_offset",
+  "created": "2026-11-25T07:44:25+08:00",
+  "source_run": "C:\\Users\\ray20\\Desktop\\Delta_Arm\\DRV-Modbus\\runs\\20261125-074152_circle_trace",
+  "supersedes": "20261125-073955.json",
+  "notes": "筆跡回饋分析自動記錄",
+  "data": {
+    "n": [
+      [
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0
+      ]
+    ],
+    "b": [
+      0.8321130678463149,
+      -0.3867616487639274
+    ],
+    "kind": "circle",
+    "coverage": 1.0
+  }
+}

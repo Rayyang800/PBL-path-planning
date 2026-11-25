@@ -826,6 +826,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if u.path == "/api/snapshot":
                 return self._send(200, take_snapshot(body.get("label", "")))
+            if u.path == "/api/classify":
+                return self._send(200, classify_workpiece())
             return self._send(404, {"error": "not found"})
         except Exception as e:              # noqa: BLE001
             return self._send(400, {"ok": False, "error": str(e)})
@@ -857,6 +859,28 @@ def status_payload():
             "work": App.rend.work,
             "robot": App.robw.state, "task": App.tasks.status(), "calib": calib_summary(),
             "server_run": os.path.basename(App.slog.path)}
+
+
+def classify_workpiece():
+    """拍一張 (彩色 + 15 幀深度) 判斷 A / B / C。不動手臂;照片與判斷結果記在 runs/*_classify。"""
+    import workpiece_classify as wc
+    if App.tasks.status()["running"]:
+        raise RuntimeError("任務執行中,相機在任務那邊,結束後再判斷")
+    snap = App.camw.capture(n_depth=15)
+    if snap is None or snap.get("depth") is None:
+        raise RuntimeError("相機沒有串流或沒有深度 (未連接或任務使用中)")
+    r = wc.classify(snap["color"], snap["depth"], App.camw.info, LAYOUT)
+    with RunLog("classify", console=False, params={"robot": App.robw.state}) as log:
+        log.add_input(LAYOUT)
+        if App.robw.state.get("ok"):
+            log.event("tcp", pose=App.robw.state.get("pose"), flag=App.robw.state.get("flag"))
+        log.save_snapshot("frame", snap, App.camw.info)
+        log.save_json("classify", r)
+        log.finish("ok", {"kind": r.get("kind"), "scores": r.get("scores")})
+        run = os.path.basename(log.path)
+    App.slog.event("classify", run=run, kind=r.get("kind"))
+    return {"ok": True, "run": run, "kind": r.get("kind"), "name": r.get("name"), "task": r.get("task"),
+            "reasons": r.get("reasons"), "scores": r.get("scores")}
 
 
 def take_snapshot(label=""):

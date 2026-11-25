@@ -144,11 +144,12 @@ class TiltPlan:
         _, ok = self.twin.ik(pose[:3], R, self.q_start)
         return ok and self.hit([(0, np.asarray(pose[:3]), R)]) is None
 
-    def verify(self, draw=None, start=None):
+    def verify(self, draw=None, start=None, air_lift=None):
         """整套動作都檢查:進入、空走、描繪、回起點,以及每一點中止時回 home。失敗丟 PlanError。"""
         draw = draw or self.draw
         above, up = self.entry(draw)
-        air = [[p[0], p[1], p[2] + AIR_LIFT] + p[3:] for p in draw]
+        lift = AIR_LIFT if air_lift is None else air_lift
+        air = [[p[0], p[1], p[2] + lift] + p[3:] for p in draw]
         seq = [list(start or self.home), above, up] + air + [self.raised(air[-1]), up, draw[0]] + draw[1:]
         r = self.check_moves(seq, self.q_home)
         if not r["ok"]:

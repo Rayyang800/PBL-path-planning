@@ -36,7 +36,9 @@
     </details>
 
     <div class="card" id="works">
-      <div class="card-head"><h2>選工件開始描繪</h2><span class="muted small">預覽 = 手臂不動 · 開始 = 手臂會動</span></div>
+      <div class="card-head"><h2>選工件開始描繪</h2><span class="muted small">預覽 = 手臂不動 · 開始 = 手臂會動</span>
+        <button class="btn" id="btn-classify" title="拍一張照片判斷是 A / B / C (手臂不動)">自動判斷工件</button></div>
+      <div class="classify" id="classify-box" hidden></div>
       <div class="works">
         <div class="work">
           <div class="work-art" data-icon="A"></div>
@@ -71,7 +73,7 @@
         <div class="work">
           <div class="work-art" data-icon="D"></div>
           <div class="work-name">C 罐頭底面<span class="tag-untested">尚未上機</span></div>
-          <div class="muted small">沿底面外圍,筆自動傾斜</div>
+          <div class="muted small">沿底面外圍,筆自動傾斜。<b class="warn-txt">要先在進階設定填「尺量筆長」</b></div>
           <div class="work-btns">
             <button class="btn" data-launch="circle_bottom" data-mode="dry">預覽</button>
             <button class="btn primary" data-launch="circle_bottom" data-mode="go">開始</button>

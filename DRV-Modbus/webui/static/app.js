@@ -231,7 +231,7 @@ const FIELDS = [
   ["workpiece.surface_h", "工件表面比校正紙高 (mm)", "number"],
   ["workpiece.depth_bias", "home 高度的深度修正 (mm;近距離量測不需要)", "number"],
   ["seam.look_dz", "描繪前先下降近距離量測 (mm,0 = 不下降)", "number"],
-  ["seam.source", "縫的來源", "choice", null, {auto: "auto:影像為主、深度確認", color: "只用影像", depth: "只用深度"}],
+  ["seam.source", "縫的來源", "choice", null, {auto: "影像 (建議)", color: "影像 + 顯示和深度縫的比較", depth: "只用深度 (會偏好幾 mm)"}],
   ["seam.board_h", "板厚 mm (0 = 用深度自動估計)", "number"],
   ["seam.approach", "自動降到板面上方 (mm)", "number"], ["seam.press", "沿縫多壓 (mm)", "number"],
   ["seam.reverse", "從縫的另一端開始", "checkbox"],
@@ -258,7 +258,7 @@ const FIELDS = [
   ["circle.bottom_offset", "底面:離罐壁 (mm,0 = 自動算最小值)", "number"],
   ["pivot.tilt", "筆尖 3D 校正:傾斜角度 (度)", "number"], ["pivot.guess_len", "筆尖 3D 校正:筆長初估 (mm)", "number"],
   ["pivot.approach", "筆尖 3D 校正:傾斜後先停在上方 (mm)", "number"],
-  ["pivot.pen_len", "尺量筆長:法蘭面到筆尖 (mm,0 = 用手眼推算)", "number"],
+  ["pivot.pen_len", "尺量筆長:法蘭面到筆尖 (mm,筆垂直;傾斜描繪必填)", "number"],
   ["sec", "沿脊線描繪 (工件 A)"],
   ["ridge.views", "快速掃描視角數 (1 / 3 / 5)", "choice", null, {1: "1:只拍正上方", 3: "3:正上方 + 左右", 5: "5:正上方 + 前後左右"}],
   ["ridge.approach", "自動降到脊線上方 (mm)", "number"], ["ridge.press", "沿脊線多壓 (mm)", "number"],
@@ -322,8 +322,8 @@ function confirmDlg(title, text, cmd) {
     d.showModal();
   });
 }
-$$("[data-launch]").forEach(b => b.onclick = async () => {
-  const task = b.dataset.launch, mode = b.dataset.mode, info = TASKS[task] || {};
+async function launchTask(task, mode) {
+  const info = TASKS[task] || {};
   // 先存目前表單,讓任務用最新設定
   try { const j = await api("/api/config", readForm()); CFG = j.config; } catch (e) { return toast("設定儲存失敗:" + e.message); }
   const pv = await api(`/api/preview_cmd?task=${task}&mode=${mode}`).catch(() => ({ cmd: "" }));
@@ -337,7 +337,41 @@ $$("[data-launch]").forEach(b => b.onclick = async () => {
   }
   try { await api("/api/launch", { task, mode }); toast(`已啟動「${info.label}」,請看新開的主控台視窗`); }
   catch (e) { toast("啟動失敗:" + e.message, 4000); }
-});
+}
+$$("[data-launch]").forEach(b => b.onclick = () => launchTask(b.dataset.launch, b.dataset.mode));
+
+// ---------------- 自動判斷工件 ----------------
+$("#btn-classify").onclick = async () => {
+  const box = $("#classify-box"), btn = $("#btn-classify");
+  $$(".work").forEach(w => w.classList.remove("picked"));
+  btn.disabled = true;
+  box.hidden = false;
+  box.className = "classify";
+  box.innerHTML = "拍照判斷中 (約 3 秒,手臂不動)…";
+  try {
+    const r = await api("/api/classify", {});
+    const why = (r.reasons || []).map(esc).join("<br>");
+    if (!r.kind) {
+      box.classList.add("warn");
+      box.innerHTML = `<b>無法判斷</b>,請自己選下面的工件。<div class="small muted">${why}</div>` +
+        `<div class="small muted">紀錄 <a href="#" data-run="${esc(r.run)}">${esc(r.run)}</a></div>`;
+      return;
+    }
+    box.classList.add("ok");
+    box.innerHTML = `判斷是 <b>${esc(r.name)}</b><div class="small">${why}</div>
+      <div class="row"><button class="btn" id="cls-dry">預覽</button><button class="btn primary" id="cls-go">開始 ${esc(r.kind)}</button>
+      <span class="small muted">不對就直接按下面正確的工件 · 紀錄 <a href="#" data-run="${esc(r.run)}">${esc(r.run)}</a></span></div>`;
+    $("#cls-dry").onclick = () => launchTask(r.task, "dry");
+    $("#cls-go").onclick = () => launchTask(r.task, "go");
+    const tile = document.querySelector(`.work [data-launch="${r.task}"]`);
+    if (tile) tile.closest(".work").classList.add("picked");
+  } catch (e) {
+    box.classList.add("warn");
+    box.innerHTML = "判斷失敗:" + esc(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+};
 $$("[data-grip]").forEach(b => b.onclick = async () => {
   const st = b.dataset.grip;
   if (st === "open" && !(await confirmDlg("夾爪張開", "夾著的筆或物體會掉下來,確定?"))) return;

@@ -1,0 +1,15 @@
+{
+  "schema": 2,
+  "name": "ridge_height_gain",
+  "created": "2026-11-25T07:42:33+08:00",
+  "source_run": "C:\\Users\\ray20\\Desktop\\Delta_Arm\\DRV-Modbus\\runs\\20261125-074152_circle_trace",
+  "supersedes": "20261125-073932.json",
+  "notes": "circle_trace 人工確認接觸",
+  "data": {
+    "gain": 1.06,
+    "h_contact_mm": 44.22549808618339,
+    "h_apex_raw_mm": 41.72216800583339,
+    "cam_h_mm": 381.20491571578526,
+    "object": "circle_rim"
+  }
+}
